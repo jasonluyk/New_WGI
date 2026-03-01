@@ -5,7 +5,6 @@ import pymongo
 import pandas as pd
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-import streamlit as st 
 import re
 import requests
 import pdfplumber
@@ -16,10 +15,8 @@ import io
 # Connect to MongoDB
 # 1. Look in the cloud first...
 mongo_url = os.environ.get("MONGO_URI")
-
-# 2. If we are on your desktop, just use the Streamlit secrets file!
 if not mongo_url:
-    mongo_url = st.secrets["MONGO_URI"]
+    raise ValueError("MONGO_URI environment variable not set")
 client = pymongo.MongoClient(mongo_url)
 db = client["rankings_2026"]
 national_collection = db["wgi_analytics"]
