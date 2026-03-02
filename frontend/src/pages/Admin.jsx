@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   adminStatus, adminDiscover, adminSeed,
   adminSyncLive, adminSyncProjection, adminSyncArchive,
-  adminClearLive, adminClearProjection, getEvents
+  adminClearLive, adminClearProjection, adminSyncStandings, getEvents
 } from '../api/client'
 
 export default function Admin() {
@@ -245,6 +245,26 @@ export default function Admin() {
           <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Archive requests are triggered from the Past Events page directly.</p>
         </div>
 
+
+        {/* Group Standings */}
+        <div className="card" style={{ padding: 24 }}>
+          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>5. Group Standings</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
+            Scrapes the official WGI Group Standings page for all 6 classes. Run every Tuesday after noon Eastern.
+          </p>
+          {status?.standings_status === 'complete' && (
+            <div className="alert alert-success" style={{ marginBottom: 12 }}>
+              ✅ {status.standings_count} guards loaded
+            </div>
+          )}
+          <button
+            className="btn btn-primary"
+            disabled={loading.standings}
+            onClick={() => handle('standings', () => adminSyncStandings(user, pass))}
+          >
+            {loading.standings ? 'Syncing...' : '📊 Sync Standings'}
+          </button>
+        </div>    
       </div>
     </div>
   )

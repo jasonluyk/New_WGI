@@ -271,6 +271,7 @@ def admin_status(username: str = Depends(verify_admin)):
     projection = db["projection_state"].find_one({"type": "current_projection"}, {"_id": 0})
     archive = db["archive_state"].find_one({"type": "current_archive"}, {"_id": 0})
     national_count = db["wgi_analytics"].count_documents({})
+    standings_status = db["system_state"].find_one({"type": "standings_status"}, {"_id": 0})
 
     return {
         "discovery_status": discovery.get("status") if discovery else "none",
@@ -280,7 +281,9 @@ def admin_status(username: str = Depends(verify_admin)):
         "projection_show": projection.get("show_name") if projection else None,
         "archive_status": archive.get("status") if archive else "none",
         "archive_event": archive.get("event_name") if archive else None,
-        "national_records": national_count
+        "national_records": national_count,
+        "standings_status": standings_status.get("status") if standings_status else "none",
+        "standings_count": standings_status.get("count") if standings_status else 0,
     }
 
 @app.delete("/api/admin/clear-live")

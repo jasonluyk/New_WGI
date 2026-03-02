@@ -38,3 +38,4 @@ export const adminSyncArchive = (u, p, payload) => adminApi(u, p).post('/sync-ar
 export const adminStatus = (u, p) => adminApi(u, p).get('/status')
 export const adminClearLive = (u, p) => adminApi(u, p).delete('/clear-live')
 export const adminClearProjection = (u, p) => adminApi(u, p).delete('/clear-projection')
+export const adminSyncStandings = (u, p) => adminApi(u, p).post('/sync-standings')
