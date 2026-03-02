@@ -25,6 +25,18 @@ command_collection = db["system_state"]
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
+STANDINGS_URLS = {
+    "Scholastic A": "https://www.wgi.org/color-guard/scholastic-a-group-standings/",
+    "Scholastic Open": "https://www.wgi.org/color-guard/scholastic-open-group-standings/",
+    "Scholastic World": "https://www.wgi.org/color-guard/scholastic-world-group-standings/",
+    "Independent A": "https://www.wgi.org/color-guard/independent-a-group-standings/",
+    "Independent Open": "https://www.wgi.org/color-guard/independent-open-group-standings/",
+    "Independent World": "https://www.wgi.org/color-guard/independent-world-group-standings/",
+}
+
+
+
+
 def clean_class_name(raw_class):
     """Strips out WGI round/prelim/finals tags to keep classes unified."""
     clean = raw_class.strip()
@@ -39,6 +51,45 @@ def clean_class_name(raw_class):
     
     # Fallback just in case aggressive stripping leaves an empty string
     return clean.strip() if clean.strip() else "Scholastic A"
+
+def scrape_group_standings():
+    print("📊 [WORKER] Scraping WGI Group Standings...")
+    all_results = []
+    for class_name, url in STANDINGS_URLS.items():
+        try:
+            response = requests.get(url, timeout=15)
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                print(f"⚠️ No table found for {class_name}")
+                continue
+            rows = table.find_all("tr")[1:]  # skip header
+            for row in rows:
+                cols = [td.get_text(strip=True) for td in row.find_all("td")]
+                if len(cols) >= 6:
+                    all_results.append({
+                        "Rank": cols[0],
+                        "Guard": cols[1],
+                        "Location": cols[2],
+                        "Latest_Score": float(cols[3]) if cols[3] else 0.0,
+                        "Week": cols[4],
+                        "Seeding_Score": float(cols[5]) if cols[5] else 0.0,
+                        "Class": class_name
+                    })
+            print(f"✅ {class_name}: {len(rows)} guards")
+        except Exception as e:
+            print(f"⚠️ Failed {class_name}: {e}")
+
+    if all_results:
+        db["group_standings"].delete_many({})
+        db["group_standings"].insert_many(all_results)
+        db["system_state"].update_one(
+            {"type": "standings_status"},
+            {"$set": {"status": "complete", "count": len(all_results), "updated": datetime.utcnow().isoformat()}},
+            upsert=True
+        )
+        print(f"🎉 Group Standings saved: {len(all_results)} total guards")
+
 
 # --- 1. THE NATIONAL LEDGER & ZERO-TOUCH DISCOVERY ENGINE ---
 def scrape_national_scores():
@@ -644,6 +695,9 @@ if __name__ == "__main__":
                         command.get("prelims_url"),
                         command.get("finals_url")
                     )
+                
+                elif action == "sync_standings":
+                    scrape_group_standings()
                     
             except Exception as e:
                 print(f"❌ [WORKER] Fatal error executing command '{action}': {e}")
