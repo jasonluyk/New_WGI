@@ -102,6 +102,14 @@ def admin_sync_standings(username: str = Depends(verify_admin)):
     })
     return {"message": "Standings sync command sent."}
 
+
+@app.get("/api/guard-history")
+def get_guard_history(name: str, cls: str = None):
+    query = {"Guard": name}
+    if cls:
+        query["Class"] = cls
+    data = list(db["wgi_analytics"].find(query, {"_id": 0}))
+    return {"data": data}
 # =====================================================================
 # LIVE HUB
 # =====================================================================
