@@ -18,6 +18,7 @@ export default function LiveHub() {
   const [loading, setLoading] = useState(true)
   const [activeClass, setActiveClass] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [liveStatus, setLiveStatus] = useState('none')
 
   const fetchLive = () => {
     getLive().then(res => {
@@ -25,6 +26,7 @@ export default function LiveHub() {
       setSpots(res.data.spots || {})
       setShowName(res.data.show_name)
       setLastUpdated(new Date())
+      setLiveStatus(res.data.status || 'none')
       setLoading(false)
     }).catch(() => setLoading(false))
   }
@@ -96,6 +98,11 @@ export default function LiveHub() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <div className="live-dot" />
             <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--red)' }}>Live</span>
+            {liveStatus === 'roster_only' && (
+              <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--bg-secondary)', color: 'var(--text-muted)', borderRadius: 4, padding: '2px 8px', marginLeft: 4 }}>
+                📋 Roster Only — Scores Pending
+              </span>
+            )}
           </div>
           <h1 className="page-title">{showName}</h1>
           {lastUpdated && (

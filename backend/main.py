@@ -103,6 +103,7 @@ def admin_sync_standings(username: str = Depends(verify_admin)):
     })
     return {"message": "Standings sync command sent."}
 
+
 @app.get("/api/guard-history")
 def get_guard_history(name: str, cls: str = None):
     query = {"Guard": name}
@@ -120,11 +121,19 @@ def get_live():
     """Returns current live show data."""
     doc = db["live_state"].find_one({"type": "current_session"}, {"_id": 0})
     if not doc:
-        return {"data": [], "spots": {}, "show_name": None}
+        return {"data": [], "spots": {}, "show_name": None, "status": "none"}
+
+    # show_name may be missing from older live_state docs — fall back to active_show_name
+    show_name = doc.get("show_name") or ""
+    if not show_name:
+        active = db["system_state"].find_one({"type": "active_show_name"}, {"_id": 0})
+        show_name = active.get("name", "") if active else ""
+
     return {
         "data": doc.get("data", []),
         "spots": doc.get("spots", {}),
-        "show_name": doc.get("show_name", "")
+        "show_name": show_name,
+        "status": doc.get("status", "roster_only")
     }
 
 # =====================================================================
@@ -165,99 +174,27 @@ def get_archive(show_id: str):
     }
 
 # =====================================================================
-# SEASON STANDINGS (all guards, ranked by most recent score)
+# GROUP STANDINGS
 # =====================================================================
-@app.get("/api/all-guards")
-def get_all_guards():
-    """
-    Builds a season leaderboard from wgi_analytics.
-    For each guard+class, finds their most recent show score.
-    Prefers finals over prelims when both exist for the same show.
-    Ranked by latest score descending within each class.
-    """
-    from collections import defaultdict
-
-    CLASS_ORDER = [
-        "Scholastic A", "Scholastic Open", "Scholastic World",
-        "Independent A", "Independent Open", "Independent World"
+@app.get("/api/standings")
+def get_standings():
+    """Returns season standings grouped by class — season high and average."""
+    pipeline = [
+        {"$group": {
+            "_id": {"Guard": "$Guard", "Class": "$Class"},
+            "Guard": {"$first": "$Guard"},
+            "Class": {"$first": "$Class"},
+            "Season_High": {"$max": "$Score"},
+            "Average_Score": {"$avg": "$Score"},
+            "Shows_Attended": {"$sum": 1}
+        }},
+        {"$sort": {"Class": 1, "Season_High": -1}}
     ]
-
-    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0}))
-
-    # Group by (Guard, Class)
-    guard_map = defaultdict(list)
-    for row in all_scores:
-        key = (row["Guard"], row["Class"])
-        guard_map[key].append(row)
-
-    results = []
-    for (guard, cls), rows in guard_map.items():
-        # For each base show name, prefer finals over prelims
-        show_map = defaultdict(dict)
-        for row in rows:
-            show = row.get("Show", "")
-            is_finals = "final" in show.lower()
-            base = show.lower().replace("finals", "").replace("final", "").strip()
-            if is_finals:
-                show_map[base]["finals"] = row
-            else:
-                show_map[base]["prelims"] = row
-
-        # Build per-show best scores
-        show_entries = []
-        for base, entries in show_map.items():
-            best = entries.get("finals") or entries.get("prelims")
-            show_entries.append((base, best))
-
-        # Sort by show name — acts as rough chronological order
-        show_entries.sort(key=lambda x: x[0])
-
-        # Most recent = last after sort
-        _, most_recent = show_entries[-1]
-        latest_score = most_recent.get("Score", 0)
-        latest_show = most_recent.get("Show", "")
-        is_finals = "final" in latest_show.lower()
-
-        season_high = max(
-            (entries.get("finals") or entries.get("prelims"))["Score"]
-            for _, entries in show_map.items()
-        )
-
-        all_show_scores = sorted([
-            {
-                "Show": (entries.get("finals") or entries.get("prelims"))["Show"],
-                "Score": (entries.get("finals") or entries.get("prelims"))["Score"]
-            }
-            for _, entries in show_map.items()
-        ], key=lambda x: x["Show"])
-
-        results.append({
-            "Guard": guard,
-            "Class": cls,
-            "Latest_Score": round(latest_score, 3),
-            "Latest_Show": latest_show,
-            "Made_Finals": is_finals,
-            "Season_High": round(season_high, 3),
-            "Shows": len(show_map),
-            "All_Scores": all_show_scores
-        })
-
-    # Sort by class order then latest score descending
-    results.sort(key=lambda x: (
-        CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
-        -x["Latest_Score"]
-    ))
-
-    # Add rank within each class
-    class_rank = {}
+    results = list(db["wgi_analytics"].aggregate(pipeline))
     for r in results:
-        c = r["Class"]
-        class_rank[c] = class_rank.get(c, 0) + 1
-        r["Rank"] = class_rank[c]
-
+        r.pop("_id", None)
+        r["Average_Score"] = round(r["Average_Score"], 3)
     return {"data": results}
-
-
 
 # =====================================================================
 # ADMIN ENDPOINTS (password protected)
