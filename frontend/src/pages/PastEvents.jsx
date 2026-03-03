@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getEvents, getArchive } from '../api/client'
+import { getEvents, getArchive, adminSyncArchive } from '../api/client'
 import DataTable from '../components/DataTable'
 
 export default function PastEvents() {
@@ -23,10 +23,26 @@ export default function PastEvents() {
     setArchiveStatus('none')
   }
 
-  const handleRequest = () => {
+  const handleRequest = async () => {
     if (!selected) return
+    const event = events.find(e => e.show_id === selected)
+    if (!event) return
+
     setArchiveStatus('loading')
-    // Poll until complete
+    setArchive([])
+
+    // Step 1: send the scrape command to the worker
+    try {
+      const pass = sessionStorage.getItem('admin_pass') || ''
+      await adminSyncArchive('admin', pass, {
+        show_id: selected,
+        event_name: event.name
+      })
+    } catch {
+      // If not authed, worker may already have data — still poll
+    }
+
+    // Step 2: poll until worker writes results
     const poll = setInterval(() => {
       getArchive(selected).then(res => {
         if (res.data.status === 'complete') {
@@ -39,8 +55,11 @@ export default function PastEvents() {
         }
       })
     }, 2000)
-    // Timeout after 60s
-    setTimeout(() => clearInterval(poll), 60000)
+    // Timeout after 90s
+    setTimeout(() => {
+      clearInterval(poll)
+      setArchiveStatus(s => s === 'loading' ? 'empty' : s)
+    }, 90000)
   }
 
   const classes = ['All', ...new Set(archive.map(r => r.Class))].sort()
