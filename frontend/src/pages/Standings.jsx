@@ -140,7 +140,7 @@ export default function Standings() {
                   {guard.All_Scores.map((r, i) => {
                     const pct = seasonHigh > 0 ? (r.Score / seasonHigh) * 100 : 0
                     const isHigh = r.Score === seasonHigh
-                    const isFinals = 'final' in r.Show.toLowerCase()
+                    const isFinals = r.Show.toLowerCase().includes('final')
                     return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{r.Score.toFixed(1)}</div>
