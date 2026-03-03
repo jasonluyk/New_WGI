@@ -174,28 +174,97 @@ def get_archive(show_id: str):
     }
 
 # =====================================================================
-# GROUP STANDINGS
+# SEASON STANDINGS (all guards, ranked by most recent score)
 # =====================================================================
-@app.get("/api/standings")
-def get_standings():
-    """Returns season standings grouped by class — season high and average."""
-    pipeline = [
-        {"$group": {
-            "_id": {"Guard": "$Guard", "Class": "$Class"},
-            "Guard": {"$first": "$Guard"},
-            "Class": {"$first": "$Class"},
-            "Season_High": {"$max": "$Score"},
-            "Average_Score": {"$avg": "$Score"},
-            "Shows_Attended": {"$sum": 1}
-        }},
-        {"$sort": {"Class": 1, "Season_High": -1}}
-    ]
-    results = list(db["wgi_analytics"].aggregate(pipeline))
-    for r in results:
-        r.pop("_id", None)
-        r["Average_Score"] = round(r["Average_Score"], 3)
-    return {"data": results}
+@app.get("/api/all-guards")
+def get_all_guards():
+    """
+    Builds a season leaderboard from wgi_analytics.
+    For each guard+class, finds their most recent show score.
+    Prefers finals over prelims when both exist for the same show.
+    Ranked by latest score descending within each class.
+    """
+    from collections import defaultdict
 
+    CLASS_ORDER = [
+        "Scholastic A", "Scholastic Open", "Scholastic World",
+        "Independent A", "Independent Open", "Independent World"
+    ]
+
+    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0}))
+
+    # Group by (Guard, Class)
+    guard_map = defaultdict(list)
+    for row in all_scores:
+        key = (row["Guard"], row["Class"])
+        guard_map[key].append(row)
+
+    results = []
+    for (guard, cls), rows in guard_map.items():
+        # For each base show name, prefer finals over prelims
+        show_map = defaultdict(dict)
+        for row in rows:
+            show = row.get("Show", "")
+            is_finals = "final" in show.lower()
+            base = show.lower().replace("finals", "").replace("final", "").strip()
+            if is_finals:
+                show_map[base]["finals"] = row
+            else:
+                show_map[base]["prelims"] = row
+
+        # Build per-show best scores
+        show_entries = []
+        for base, entries in show_map.items():
+            best = entries.get("finals") or entries.get("prelims")
+            show_entries.append((base, best))
+
+        # Sort by show name — acts as rough chronological order
+        show_entries.sort(key=lambda x: x[0])
+
+        # Most recent = last after sort
+        _, most_recent = show_entries[-1]
+        latest_score = most_recent.get("Score", 0)
+        latest_show = most_recent.get("Show", "")
+        is_finals = "final" in latest_show.lower()
+
+        season_high = max(
+            (entries.get("finals") or entries.get("prelims"))["Score"]
+            for _, entries in show_map.items()
+        )
+
+        all_show_scores = sorted([
+            {
+                "Show": (entries.get("finals") or entries.get("prelims"))["Show"],
+                "Score": (entries.get("finals") or entries.get("prelims"))["Score"]
+            }
+            for _, entries in show_map.items()
+        ], key=lambda x: x["Show"])
+
+        results.append({
+            "Guard": guard,
+            "Class": cls,
+            "Latest_Score": round(latest_score, 3),
+            "Latest_Show": latest_show,
+            "Made_Finals": is_finals,
+            "Season_High": round(season_high, 3),
+            "Shows": len(show_map),
+            "All_Scores": all_show_scores
+        })
+
+    # Sort by class order then latest score descending
+    results.sort(key=lambda x: (
+        CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
+        -x["Latest_Score"]
+    ))
+
+    # Add rank within each class
+    class_rank = {}
+    for r in results:
+        c = r["Class"]
+        class_rank[c] = class_rank.get(c, 0) + 1
+        r["Rank"] = class_rank[c]
+
+    return {"data": results}
 # =====================================================================
 # ADMIN ENDPOINTS (password protected)
 # =====================================================================
