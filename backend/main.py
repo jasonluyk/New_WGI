@@ -108,8 +108,7 @@ def admin_sync_standings(username: str = Depends(verify_admin)):
 def get_guard_history(name: str, cls: str = None):
     query = {"Guard": name}
     if cls:
-        # Match base class — handles "Scholastic A", "Scholastic A - Round 1", etc.
-        query["Class"] = {"$regex": f"^{re.escape(cls)}", "$options": "i"}
+        query["Class"] = cls
     data = list(db["wgi_analytics"].find(query, {"_id": 0}))
     return {"data": data}
 # =====================================================================
