@@ -32,7 +32,7 @@ export default function Standings() {
   const handleGuardClick = async (guard) => {
     setSelectedGuard(guard)
     try {
-      const res = await fetch(`/api/guard-history?name=${encodeURIComponent(guard.Guard)}&class=${encodeURIComponent(guard.Class)}`)
+      const res = await fetch(`/api/guard-history?name=${encodeURIComponent(guard.Guard)}&cls=${encodeURIComponent(guard.Class)}`)
       const json = await res.json()
       setGuardHistory(json.data || [])
     } catch {
