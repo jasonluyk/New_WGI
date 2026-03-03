@@ -86,16 +86,23 @@ def get_national_by_class(class_name: str):
         r["Average_Score"] = round(r["Average_Score"], 3)
     return {"data": results}
 
+@app.get("/api/standings")
+def get_standings():
+    data = list(db["group_standings"].find({}, {"_id": 0}))
+    status = db["system_state"].find_one({"type": "standings_status"}, {"_id": 0})
+    return {
+        "data": data,
+        "updated": status.get("updated") if status else None
+    }
 
+@app.post("/api/admin/sync-standings")
+def admin_sync_standings(username: str = Depends(verify_admin)):
+    db["system_state"].insert_one({
+        "type": "scraper_command",
+        "action": "sync_standings"
+    })
+    return {"message": "Standings sync command sent."}
 
-
-@app.get("/api/guard-history")
-def get_guard_history(name: str, cls: str = None):
-    query = {"Guard": name}
-    if cls:
-        query["Class"] = cls
-    data = list(db["wgi_analytics"].find(query, {"_id": 0}))
-    return {"data": data}
 
 
 # =====================================================================
@@ -242,6 +249,14 @@ def get_all_guards():
         r["Rank"] = class_rank[c]
 
     return {"data": results}
+
+@app.get("/api/guard-history")
+def get_guard_history(name: str, cls: str = None):
+    query = {"Guard": name}
+    if cls:
+        query["Class"] = cls
+    data = list(db["wgi_analytics"].find(query, {"_id": 0}))
+    return {"data": data}
 
 # =====================================================================
 # ADMIN ENDPOINTS (password protected)
