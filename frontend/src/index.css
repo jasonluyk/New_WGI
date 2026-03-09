@@ -120,6 +120,14 @@ h1, h2, h3, h4 {
   background: var(--red-dim);
 }
 
+.data-table tr.pod1-adv td {
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.data-table tr.pod2-adv td {
+  background: rgba(96, 165, 250, 0.08);
+}
+
 .data-table tr.no-data td {
   color: var(--text-muted);
   font-style: italic;
@@ -142,6 +150,7 @@ h1, h2, h3, h4 {
 .badge-red { background: var(--red-dim); color: var(--red); }
 .badge-gold { background: var(--accent-dim); color: var(--accent); }
 .badge-gray { background: rgba(100,100,130,0.15); color: var(--text-muted); }
+.badge-yellow { background: rgba(232, 184, 75, 0.15); color: var(--accent); }
 
 /* Buttons */
 .btn {
