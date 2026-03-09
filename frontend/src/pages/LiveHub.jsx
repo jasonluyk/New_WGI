@@ -111,7 +111,7 @@ export default function LiveHub() {
   const rawClassData = liveData.filter(r => r.Class?.startsWith(activeClass || ''))
   const classData = assignStatuses(rawClassData, spots, isPlusEvent, activeClass)
     .sort((a, b) => {
-      // Sort: scored guards by score desc, then pending by time
+      // Scored guards float to top ranked by score, pending stay below by time
       if (a['Prelims Score'] > 0 && b['Prelims Score'] > 0)
         return b['Prelims Score'] - a['Prelims Score']
       if (a['Prelims Score'] > 0) return -1
