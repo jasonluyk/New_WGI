@@ -14,6 +14,17 @@ function getRoundNumber(classStr) {
   return m ? parseInt(m[1]) : null
 }
 
+function parseTime(timeStr) {
+  // Converts '9:30 AM', '1:06 PM' etc. to minutes since midnight for proper sorting
+  if (!timeStr) return 9999
+  const m = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i)
+  if (!m) return 9999
+  let h = parseInt(m[1]), min = parseInt(m[2]), period = m[3].toUpperCase()
+  if (period === 'PM' && h !== 12) h += 12
+  if (period === 'AM' && h === 12) h = 0
+  return h * 60 + min
+}
+
 function assignStatuses(guards, spots, isPlusEvent, baseClass) {
   const isScholasticA = baseClass === 'Scholastic A'
 
@@ -109,14 +120,22 @@ export default function LiveHub() {
 
   // Get all guards for active class, assign statuses
   const rawClassData = liveData.filter(r => r.Class?.startsWith(activeClass || ''))
+  // For plus events Scholastic A: keep time order until ALL guards have scored,
+  // then re-rank by score. All other classes float scored guards to top immediately.
+  const allScored = rawClassData.length > 0 && rawClassData.every(g => g['Prelims Score'] > 0)
+  const keepTimeOrder = isPlusEvent && activeClass === 'Scholastic A' && !allScored
+
   const classData = assignStatuses(rawClassData, spots, isPlusEvent, activeClass)
     .sort((a, b) => {
+      if (keepTimeOrder) {
+        return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
+      }
       // Scored guards float to top ranked by score, pending stay below by time
       if (a['Prelims Score'] > 0 && b['Prelims Score'] > 0)
         return b['Prelims Score'] - a['Prelims Score']
       if (a['Prelims Score'] > 0) return -1
       if (b['Prelims Score'] > 0) return 1
-      return (a['Prelims Time'] || '').localeCompare(b['Prelims Time'] || '')
+      return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
     })
 
   const scored = classData.filter(r => r['Prelims Score'] > 0)
