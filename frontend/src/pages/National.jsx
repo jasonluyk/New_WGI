@@ -26,6 +26,8 @@ export default function National() {
   const filtered = data
     .filter(r => r.Class === activeClass)
     .filter(r => r.Guard?.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (b.Seeding_Score || 0) - (a.Seeding_Score || 0))
+    .map((r, i) => ({ ...r, Rank: i + 1 }))
 
   const columns = [
     { key: 'Rank', label: '#', width: 50 },
