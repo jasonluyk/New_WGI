@@ -1,7 +1,5 @@
 #!/bin/bash
 
-export MONGO_URI="mongodb+srv://jason:bsidata@bsicluster.uifuc9m.mongodb.net/?appName=BSICluster"
-export ADMIN_PASS="WE7AJNoQ456^%$"
 
 source /root/New_WGI/venv/bin/activate
 
