@@ -1,14 +1,20 @@
 #!/bin/bash
+set -a
+source /etc/environment
+set +a
 
+cd /root/New_WGI
+source venv/bin/activate
 
-source /root/New_WGI/venv/bin/activate
+# Kill anything leftover on these ports
+fuser -k 80/tcp 2>/dev/null
+fuser -k 8000/tcp 2>/dev/null
 
-# Start the scraper worker in the background
-python /root/New_WGI/backend/scraper_worker.py &
+# Start worker
+python backend/scraper_worker.py &
 
-# Start FastAPI in the background
-cd /root/New_WGI/backend
-uvicorn main:app --host 0.0.0.0 --port 8000 &
+# Start API
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
 
-# Nginx serves the React build on port 80
+# Start nginx
 nginx -g "daemon off;"
