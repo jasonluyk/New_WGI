@@ -122,15 +122,15 @@ export default function LiveHub() {
   const rawClassData = liveData.filter(r => r.Class?.startsWith(activeClass || ''))
   // For plus events Scholastic A: keep time order until ALL guards have scored,
   // then re-rank by score. All other classes float scored guards to top immediately.
-  const allScored = rawClassData.length > 0 && rawClassData.every(g => g['Prelims Score'] > 0)
-  const keepTimeOrder = isPlusEvent && activeClass === 'Scholastic A' && !allScored
+  const anyScored = rawClassData.some(g => g['Prelims Score'] > 0)
 
   const classData = assignStatuses(rawClassData, spots, isPlusEvent, activeClass)
     .sort((a, b) => {
-      if (keepTimeOrder) {
+      // No scores yet — keep everyone in time order
+      if (!anyScored) {
         return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
       }
-      // Scored guards float to top ranked by score, pending stay below by time
+      // Scores are coming in — float scored guards to top by score, pending by time below
       if (a['Prelims Score'] > 0 && b['Prelims Score'] > 0)
         return b['Prelims Score'] - a['Prelims Score']
       if (a['Prelims Score'] > 0) return -1
