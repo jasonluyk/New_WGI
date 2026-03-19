@@ -121,19 +121,11 @@ def get_live():
     """Returns current live show data."""
     doc = db["live_state"].find_one({"type": "current_session"}, {"_id": 0})
     if not doc:
-        return {"data": [], "spots": {}, "show_name": None, "status": "none"}
-
-    # show_name may be missing from older live_state docs — fall back to active_show_name
-    show_name = doc.get("show_name") or ""
-    if not show_name:
-        active = db["system_state"].find_one({"type": "active_show_name"}, {"_id": 0})
-        show_name = active.get("name", "") if active else ""
-
+        return {"data": [], "spots": {}, "show_name": None}
     return {
         "data": doc.get("data", []),
         "spots": doc.get("spots", {}),
-        "show_name": show_name,
-        "status": doc.get("status", "roster_only")
+        "show_name": doc.get("show_name", "")
     }
 
 # =====================================================================
@@ -174,16 +166,34 @@ def get_archive(show_id: str):
     }
 
 # =====================================================================
+# GROUP STANDINGS
+# =====================================================================
+@app.get("/api/standings")
+def get_standings():
+    """Returns season standings grouped by class — season high and average."""
+    pipeline = [
+        {"$group": {
+            "_id": {"Guard": "$Guard", "Class": "$Class"},
+            "Guard": {"$first": "$Guard"},
+            "Class": {"$first": "$Class"},
+            "Season_High": {"$max": "$Score"},
+            "Average_Score": {"$avg": "$Score"},
+            "Shows_Attended": {"$sum": 1}
+        }},
+        {"$sort": {"Class": 1, "Season_High": -1}}
+    ]
+    results = list(db["wgi_analytics"].aggregate(pipeline))
+    for r in results:
+        r.pop("_id", None)
+        r["Average_Score"] = round(r["Average_Score"], 3)
+    return {"data": results}
+
+
+# =====================================================================
 # SEASON STANDINGS (all guards, ranked by most recent score)
 # =====================================================================
 @app.get("/api/all-guards")
 def get_all_guards():
-    """
-    Builds a season leaderboard from wgi_analytics.
-    For each guard+class, finds their most recent show score.
-    Prefers finals over prelims when both exist for the same show.
-    Ranked by latest score descending within each class.
-    """
     from collections import defaultdict
 
     CLASS_ORDER = [
@@ -201,7 +211,7 @@ def get_all_guards():
 
     results = []
     for (guard, cls), rows in guard_map.items():
-        # For each base show name, prefer finals over prelims
+        # Group by base show name, prefer finals over prelims
         show_map = defaultdict(dict)
         for row in rows:
             show = row.get("Show", "")
@@ -212,21 +222,27 @@ def get_all_guards():
             else:
                 show_map[base]["prelims"] = row
 
-        # Build per-show best scores
+        # Build per-show best entries
         show_entries = []
         for base, entries in show_map.items():
             best = entries.get("finals") or entries.get("prelims")
             show_entries.append((base, best))
 
-        # Sort by show name — acts as rough chronological order
-        show_entries.sort(key=lambda x: x[0])
+        # Sort by date if available, otherwise fall back to show name alphabetically
+        def sort_key(item):
+            _, row = item
+            date = row.get("Date")
+            if date:
+                return (0, date)  # dated shows sort first, chronologically
+            return (1, item[0])   # undated shows sort after, alphabetically
+
+        show_entries.sort(key=sort_key)
 
         # Most recent = last after sort
         _, most_recent = show_entries[-1]
         latest_score = most_recent.get("Score", 0)
         latest_show = most_recent.get("Show", "")
         is_finals = "final" in latest_show.lower()
-
         season_high = max(
             (entries.get("finals") or entries.get("prelims"))["Score"]
             for _, entries in show_map.items()
@@ -235,10 +251,11 @@ def get_all_guards():
         all_show_scores = sorted([
             {
                 "Show": (entries.get("finals") or entries.get("prelims"))["Show"],
-                "Score": (entries.get("finals") or entries.get("prelims"))["Score"]
+                "Score": (entries.get("finals") or entries.get("prelims"))["Score"],
+                "Date": (entries.get("finals") or entries.get("prelims")).get("Date")
             }
             for _, entries in show_map.items()
-        ], key=lambda x: x["Show"])
+        ], key=lambda x: x.get("Date") or x["Show"])
 
         results.append({
             "Guard": guard,
@@ -257,7 +274,7 @@ def get_all_guards():
         -x["Latest_Score"]
     ))
 
-    # Add rank within each class
+    # Rank within each class
     class_rank = {}
     for r in results:
         c = r["Class"]
@@ -265,6 +282,7 @@ def get_all_guards():
         r["Rank"] = class_rank[c]
 
     return {"data": results}
+
 # =====================================================================
 # ADMIN ENDPOINTS (password protected)
 # =====================================================================
