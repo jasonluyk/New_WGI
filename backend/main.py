@@ -222,53 +222,38 @@ def get_all_guards():
             else:
                 show_map[base]["prelims"] = row
 
-        # Build per-show best entries
-        show_entries = []
+        # Build per-show best score (finals > prelims)
+        all_show_scores = []
         for base, entries in show_map.items():
             best = entries.get("finals") or entries.get("prelims")
-            show_entries.append((base, best))
+            all_show_scores.append({
+                "Show": best["Show"],
+                "Score": best["Score"],
+                "Date": best.get("Date")
+            })
 
-        # Sort by date if available, otherwise fall back to show name alphabetically
-        def sort_key(item):
-            _, row = item
-            date = row.get("Date")
-            if date:
-                return (0, date)  # dated shows sort first, chronologically
-            return (1, item[0])   # undated shows sort after, alphabetically
+        # Sort show history chronologically for the modal chart
+        all_show_scores.sort(key=lambda x: x.get("Date") or x["Show"])
 
-        show_entries.sort(key=sort_key)
+        season_high = max(s["Score"] for s in all_show_scores)
+        season_avg = round(sum(s["Score"] for s in all_show_scores) / len(all_show_scores), 3)
 
-        # Most recent = last after sort
-        _, most_recent = show_entries[-1]
-        latest_score = most_recent.get("Score", 0)
-        latest_show = most_recent.get("Show", "")
-        is_finals = "final" in latest_show.lower()
-        season_high = max(
-            (entries.get("finals") or entries.get("prelims"))["Score"]
-            for _, entries in show_map.items()
-        )
-
-        all_show_scores = sorted([
-            {
-                "Show": (entries.get("finals") or entries.get("prelims"))["Show"],
-                "Score": (entries.get("finals") or entries.get("prelims"))["Score"],
-                "Date": (entries.get("finals") or entries.get("prelims")).get("Date")
-            }
-            for _, entries in show_map.items()
-        ], key=lambda x: x.get("Date") or x["Show"])
+        # Best show = highest score
+        best_show = max(all_show_scores, key=lambda x: x["Score"])
 
         results.append({
             "Guard": guard,
             "Class": cls,
-            "Latest_Score": round(latest_score, 3),
-            "Latest_Show": latest_show,
-            "Made_Finals": is_finals,
+            "Latest_Score": round(season_high, 3),     # ranked by season high
+            "Latest_Show": best_show["Show"],           # show where they scored highest
+            "Made_Finals": "final" in best_show["Show"].lower(),
             "Season_High": round(season_high, 3),
+            "Season_Avg": season_avg,
             "Shows": len(show_map),
             "All_Scores": all_show_scores
         })
 
-    # Sort by class order then latest score descending
+    # Sort by class order then season high descending
     results.sort(key=lambda x: (
         CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
         -x["Latest_Score"]
@@ -282,10 +267,6 @@ def get_all_guards():
         r["Rank"] = class_rank[c]
 
     return {"data": results}
-
-# =====================================================================
-# ADMIN ENDPOINTS (password protected)
-# =====================================================================
 @app.post("/api/admin/discover")
 def admin_discover(username: str = Depends(verify_admin)):
     """Triggers auto-discovery of WGI events."""

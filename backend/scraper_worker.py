@@ -671,18 +671,36 @@ def scrape_projection(show_name, prelims_url, finals_url):
 
         browser.close()
 
-    # --- PASS 3: Replace live scores with season averages ---
+    # --- PASS 3: Replace live scores with season high ---
+    from collections import defaultdict
     for guard_name, guard_data in combined_data.items():
         base_class = guard_data["Class"].split(" - ")[0].strip()
         scores = list(db["wgi_analytics"].find(
             {"Guard": guard_name, "Class": base_class},
-            {"_id": 0, "Score": 1}
+            {"_id": 0, "Score": 1, "Show": 1}
         ))
         if scores:
-            combined_data[guard_name]["Prelims Score"] = round(
-                sum(s["Score"] for s in scores) / len(scores), 3
-            )
-            combined_data[guard_name]["Shows Attended"] = len(scores)
+            # Group by base show, prefer finals over prelims
+            show_map = defaultdict(dict)
+            for row in scores:
+                show = row.get("Show", "")
+                is_finals = "final" in show.lower()
+                base = show.lower().replace("finals", "").replace("final", "").strip()
+                if is_finals:
+                    show_map[base]["finals"] = row
+                else:
+                    show_map[base]["prelims"] = row
+
+            best_scores = [
+                (entries.get("finals") or entries.get("prelims"))["Score"]
+                for entries in show_map.values()
+            ]
+            season_high = round(max(best_scores), 3)
+            season_avg = round(sum(best_scores) / len(best_scores), 3)
+
+            combined_data[guard_name]["Prelims Score"] = season_high
+            combined_data[guard_name]["Season_Avg"] = season_avg
+            combined_data[guard_name]["Shows Attended"] = len(show_map)
 
     final_list = list(combined_data.values())
     if final_list:
