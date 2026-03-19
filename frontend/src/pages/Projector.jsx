@@ -63,7 +63,7 @@ export default function Projector() {
     { key: 'Guard', label: 'Guard' },
     { key: 'Class', label: 'Round', width: 140 },
     {
-      key: 'Prelims Score', label: 'Avg Score', width: 120,
+      key: 'Prelims Score', label: 'Highest Score', width: 120,
       render: v => v > 0
         ? <strong style={{ color: 'var(--accent)' }}>{v.toFixed(3)}</strong>
         : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No Data</span>
