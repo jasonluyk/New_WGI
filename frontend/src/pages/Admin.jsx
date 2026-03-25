@@ -203,7 +203,7 @@ export default function Admin() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className="btn btn-primary"
-              disabled={!selectedLive || !livePrelimsUrl || loading.live}
+              disabled={!selectedLive || (!livePrelimsUrl && !liveShowId) || loading.live}
               onClick={() => handle('live', () => adminSyncLive(user, pass, {
                 show_name: selectedLive.name,
                 show_id: liveShowId || '',
