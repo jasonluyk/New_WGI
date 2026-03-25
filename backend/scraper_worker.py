@@ -391,11 +391,33 @@ def scrape_national_scores():
 # --- LIVE HUB ---
 # =====================================================================
 
+def fuzzy_match(admin_name, wgi_name):
+    """
+    More robust matching between admin show name and WGI show name.
+    e.g. "Buford +" should match "Buford Color Guard Regional"
+    Strips common noise words and matches on the core city/location name.
+    """
+    noise = ['color guard', 'colorguard', 'regional', 'championship', 'cg', '+', '-']
+    def clean(s):
+        s = s.lower()
+        for w in noise:
+            s = s.replace(w, '')
+        return s.strip()
+
+    a = clean(admin_name)
+    b = clean(wgi_name)
+
+    if not a or not b:
+        return False
+
+    # Match if either cleaned name starts with or contains the other
+    return a in b or b in a or a.split()[0] == b.split()[0]
+
+
 def poll_for_show_id(show_name):
     """
     Polls WGI scores page every 5 minutes looking for a ShowID matching
     the latched show name. Runs in a background daemon thread.
-    Uses same name extraction + fuzzy matching logic as Hop 3.
     """
     print(f"🔍 [WORKER] Background polling for ShowID: {show_name}...")
 
@@ -413,49 +435,52 @@ def poll_for_show_id(show_name):
                 soup = BeautifulSoup(page.content(), 'html.parser')
                 browser.close()
 
-                for link in soup.find_all('a', href=True):
-                    href = link['href']
-                    if 'ShowId=' not in href:
-                        continue
+            found_id = None
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                if 'ShowId=' not in href:
+                    continue
 
-                    # Same name extraction as Hop 3
-                    link_name = link.get_text(strip=True)
-                    if not link_name or "View" in link_name or "Score" in link_name:
-                        row = link.find_parent('tr')
-                        if row:
-                            cols = row.find_all('td')
-                            if cols:
-                                link_name = cols[0].get_text(strip=True)
+                # Extract show name from link or parent row
+                link_name = link.get_text(strip=True)
+                if not link_name or "View" in link_name or "Score" in link_name:
+                    row = link.find_parent('tr')
+                    if row:
+                        cols = row.find_all('td')
+                        if cols:
+                            link_name = cols[0].get_text(strip=True)
 
-                    clean_name = link_name.split("Regional")[0].strip() if link_name else ""
-                    extracted_id = href.split("ShowId=")[-1]
+                extracted_id = href.split("ShowId=")[-1]
+                print(f"  Checking: '{link_name}' vs '{show_name}'")
 
-                    # Same fuzzy match as Hop 3
-                    if clean_name.lower() in show_name.lower() or show_name.lower() in clean_name.lower():
-                        print(f"🎯 [WORKER] ShowID found for {show_name}: {extracted_id}")
+                if fuzzy_match(show_name, link_name):
+                    found_id = extracted_id
+                    print(f"🎯 [WORKER] ShowID found for {show_name}: {found_id} (matched '{link_name}')")
+                    break
 
-                        # Update event_metadata and active_show_name with discovered ShowID
-                        db["event_metadata"].update_one(
-                            {"name": show_name},
-                            {"$set": {"show_id": extracted_id}},
-                            upsert=True
-                        )
-                        db["system_state"].update_one(
-                            {"type": "active_show_name"},
-                            {"$set": {"show_id": extracted_id}},
-                            upsert=True
-                        )
+            if found_id:
+                # Update MongoDB with discovered ShowID
+                db["event_metadata"].update_one(
+                    {"name": show_name},
+                    {"$set": {"show_id": found_id}},
+                    upsert=True
+                )
+                db["system_state"].update_one(
+                    {"type": "active_show_name"},
+                    {"$set": {"show_id": found_id}},
+                    upsert=True
+                )
 
-                        # Re-run live scrape now with ShowID
-                        session = db["live_state"].find_one({"type": "current_session"})
-                        if session:
-                            scrape_live_show(
-                                show_name,
-                                session.get("prelims_url"),
-                                session.get("finals_url"),
-                                show_id=extracted_id
-                            )
-                        return  # Stop polling once found
+                # Re-run live scrape with ShowID — schedule URLs preserved from live_state
+                session = db["live_state"].find_one({"type": "current_session"})
+                if session:
+                    scrape_live_show(
+                        show_name,
+                        session.get("prelims_url"),
+                        session.get("finals_url"),
+                        show_id=found_id
+                    )
+                return  # Done — thread exits
 
         except Exception as e:
             print(f"⚠️ [WORKER] Poll error: {e}")
@@ -671,36 +696,18 @@ def scrape_projection(show_name, prelims_url, finals_url):
 
         browser.close()
 
-    # --- PASS 3: Replace live scores with season high ---
-    from collections import defaultdict
+    # --- PASS 3: Replace live scores with season averages ---
     for guard_name, guard_data in combined_data.items():
         base_class = guard_data["Class"].split(" - ")[0].strip()
         scores = list(db["wgi_analytics"].find(
             {"Guard": guard_name, "Class": base_class},
-            {"_id": 0, "Score": 1, "Show": 1}
+            {"_id": 0, "Score": 1}
         ))
         if scores:
-            # Group by base show, prefer finals over prelims
-            show_map = defaultdict(dict)
-            for row in scores:
-                show = row.get("Show", "")
-                is_finals = "final" in show.lower()
-                base = show.lower().replace("finals", "").replace("final", "").strip()
-                if is_finals:
-                    show_map[base]["finals"] = row
-                else:
-                    show_map[base]["prelims"] = row
-
-            best_scores = [
-                (entries.get("finals") or entries.get("prelims"))["Score"]
-                for entries in show_map.values()
-            ]
-            season_high = round(max(best_scores), 3)
-            season_avg = round(sum(best_scores) / len(best_scores), 3)
-
-            combined_data[guard_name]["Prelims Score"] = season_high
-            combined_data[guard_name]["Season_Avg"] = season_avg
-            combined_data[guard_name]["Shows Attended"] = len(show_map)
+            combined_data[guard_name]["Prelims Score"] = round(
+                sum(s["Score"] for s in scores) / len(scores), 3
+            )
+            combined_data[guard_name]["Shows Attended"] = len(scores)
 
     final_list = list(combined_data.values())
     if final_list:

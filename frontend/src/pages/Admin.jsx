@@ -5,49 +5,6 @@ import {
   adminClearLive, adminClearProjection, adminSyncStandings, getEvents
 } from '../api/client'
 
-// Sub-component: lets admin override URLs if auto-discovery didn't find them
-function LiveManualOverride({ selectedLive, loading, onLatch }) {
-  const [preliUrl, setPreliUrl] = useState('')
-  const [finalsUrl, setFinalsUrl] = useState('')
-
-  useEffect(() => {
-    setPreliUrl(selectedLive?.p_url || '')
-    setFinalsUrl(selectedLive?.f_url || '')
-  }, [selectedLive?.name])
-
-  const effectivePrelims = preliUrl || selectedLive?.p_url || ''
-  const effectiveFinals = finalsUrl || selectedLive?.f_url || ''
-
-  return (
-    <div>
-      <div style={{ marginBottom: 8 }}>
-        <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-          Prelims URL <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}>(PDF or CompSuite link)</span>
-        </label>
-        <input className="input" placeholder="https://..." value={preliUrl} onChange={e => setPreliUrl(e.target.value)} />
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-          Finals URL <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}>(optional)</span>
-        </label>
-        <input className="input" placeholder="https://..." value={finalsUrl} onChange={e => setFinalsUrl(e.target.value)} />
-      </div>
-      <button
-        className="btn btn-primary"
-        disabled={!selectedLive || !effectivePrelims || loading.live}
-        onClick={() => onLatch({
-          show_name: selectedLive.name,
-          show_id: selectedLive.show_id || '',
-          prelims_url: effectivePrelims,
-          finals_url: effectiveFinals,
-        })}
-      >
-        {loading.live ? 'Syncing...' : '📡 Latch & Sync'}
-      </button>
-    </div>
-  )
-}
-
 export default function Admin() {
   const [authed, setAuthed] = useState(() => !!sessionStorage.getItem('admin_authed'))
   const [password, setPassword] = useState('')
@@ -56,6 +13,9 @@ export default function Admin() {
   const [events, setEvents] = useState([])
   const [selectedLiveEvent, setSelectedLiveEvent] = useState('')
   const [selectedProjEvent, setSelectedProjEvent] = useState('')
+  const [livePrelimsUrl, setLivePrelimsUrl] = useState('')
+  const [liveFinalsUrl, setLiveFinalsUrl] = useState('')
+  const [liveShowId, setLiveShowId] = useState('')
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState({})
 
@@ -108,6 +68,15 @@ export default function Admin() {
   }
 
   const selectedLive = events.find(e => e.name === selectedLiveEvent)
+
+  // Pre-fill URL fields when event selection changes
+  const handleLiveEventSelect = (name) => {
+    setSelectedLiveEvent(name)
+    const evt = events.find(e => e.name === name)
+    setLivePrelimsUrl(evt?.p_url || '')
+    setLiveFinalsUrl(evt?.f_url || '')
+    setLiveShowId(evt?.show_id || '')
+  }
   const selectedProj = events.find(e => e.name === selectedProjEvent)
 
   if (!authed) return (
@@ -206,28 +175,48 @@ export default function Admin() {
           {status?.active_show && (
             <div className="alert alert-success" style={{ marginBottom: 12 }}>📡 Active: {status.active_show}</div>
           )}
-          <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 10 }}>
             <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>Select Event</label>
-            <select className="select" value={selectedLiveEvent} onChange={e => setSelectedLiveEvent(e.target.value)}>
+            <select className="select" value={selectedLiveEvent} onChange={e => handleLiveEventSelect(e.target.value)}>
               <option value="">— Choose Event —</option>
               {events.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
             </select>
           </div>
-          {selectedLive && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-              <div>ShowID: <code style={{ color: 'var(--accent)' }}>{selectedLive.show_id || 'Not posted yet'}</code></div>
-              <div>Prelims: <code>{selectedLive.p_url || 'Not set'}</code></div>
-              <div>Finals: <code>{selectedLive.f_url || 'Not set'}</code></div>
-            </div>
-          )}
-          <LiveManualOverride
-            selectedLive={selectedLive}
-            loading={loading}
-            onLatch={(payload) => handle('live', () => adminSyncLive(user, pass, payload))}
-          />
-          <button className="btn btn-danger" style={{ marginTop: 8 }} onClick={() => handle('clearLive', () => adminClearLive(user, pass))}>
-            🗑️ Clear Live
-          </button>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              Prelims URL <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(CompSuite schedule)</span>
+            </label>
+            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={livePrelimsUrl} onChange={e => setLivePrelimsUrl(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              Finals URL <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(optional)</span>
+            </label>
+            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={liveFinalsUrl} onChange={e => setLiveFinalsUrl(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              WGI Show ID <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(leave blank to auto-detect)</span>
+            </label>
+            <input className="input" placeholder="e.g. 12345 — find at wgi.org/scores → hover event link" value={liveShowId} onChange={e => setLiveShowId(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-primary"
+              disabled={!selectedLive || !livePrelimsUrl || loading.live}
+              onClick={() => handle('live', () => adminSyncLive(user, pass, {
+                show_name: selectedLive.name,
+                show_id: liveShowId || '',
+                prelims_url: livePrelimsUrl,
+                finals_url: liveFinalsUrl,
+              }))}
+            >
+              {loading.live ? 'Syncing...' : '📡 Latch & Sync'}
+            </button>
+            <button className="btn btn-danger" onClick={() => handle('clearLive', () => adminClearLive(user, pass))}>
+              🗑️ Clear
+            </button>
+          </div>
         </div>
 
         {/* Projector */}
