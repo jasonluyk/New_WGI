@@ -13,11 +13,11 @@ export default function Admin() {
   const [events, setEvents] = useState([])
   const [selectedLiveEvent, setSelectedLiveEvent] = useState('')
   const [selectedProjEvent, setSelectedProjEvent] = useState('')
-  const [livePrelimsUrl, setLivePrelimsUrl] = useState('')
-  const [liveFinalsUrl, setLiveFinalsUrl] = useState('')
-  const [liveShowId, setLiveShowId] = useState('')
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState({})
+  const [worldsSessions, setWorldsSessions] = useState([])
+  const [worldsExpanded, setWorldsExpanded] = useState(false)
+  const [worldsShowIds, setWorldsShowIds] = useState({})
 
   const user = 'admin'
 
@@ -50,6 +50,7 @@ export default function Admin() {
     if (authed) {
       fetchStatus()
       getEvents().then(res => setEvents(res.data.events))
+      fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
       const interval = setInterval(fetchStatus, 5000)
       return () => clearInterval(interval)
     }
@@ -68,15 +69,6 @@ export default function Admin() {
   }
 
   const selectedLive = events.find(e => e.name === selectedLiveEvent)
-
-  // Pre-fill URL fields when event selection changes
-  const handleLiveEventSelect = (name) => {
-    setSelectedLiveEvent(name)
-    const evt = events.find(e => e.name === name)
-    setLivePrelimsUrl(evt?.p_url || '')
-    setLiveFinalsUrl(evt?.f_url || '')
-    setLiveShowId(evt?.show_id || '')
-  }
   const selectedProj = events.find(e => e.name === selectedProjEvent)
 
   if (!authed) return (
@@ -172,43 +164,29 @@ export default function Admin() {
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>2. Live Event</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Latch onto a live competition to start tracking scores.</p>
-          {status?.active_show && (
-            <div className="alert alert-success" style={{ marginBottom: 12 }}>📡 Active: {status.active_show}</div>
-          )}
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 12 }}>
             <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>Select Event</label>
-            <select className="select" value={selectedLiveEvent} onChange={e => handleLiveEventSelect(e.target.value)}>
+            <select className="select" value={selectedLiveEvent} onChange={e => setSelectedLiveEvent(e.target.value)}>
               <option value="">— Choose Event —</option>
               {events.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
             </select>
           </div>
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-              Prelims URL <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(CompSuite schedule)</span>
-            </label>
-            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={livePrelimsUrl} onChange={e => setLivePrelimsUrl(e.target.value)} />
-          </div>
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-              Finals URL <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(optional)</span>
-            </label>
-            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={liveFinalsUrl} onChange={e => setLiveFinalsUrl(e.target.value)} />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-              WGI Show ID <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(leave blank to auto-detect)</span>
-            </label>
-            <input className="input" placeholder="e.g. 12345 — find at wgi.org/scores → hover event link" value={liveShowId} onChange={e => setLiveShowId(e.target.value)} />
-          </div>
+          {selectedLive && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+              <div>ShowID: <code style={{ color: 'var(--accent)' }}>{selectedLive.show_id || 'Not posted yet'}</code></div>
+              <div>Prelims: <code>{selectedLive.p_url || 'Not set'}</code></div>
+              <div>Finals: <code>{selectedLive.f_url || 'Not set'}</code></div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className="btn btn-primary"
-              disabled={!selectedLive || (!livePrelimsUrl && !liveShowId) || loading.live}
+              disabled={!selectedLive?.p_url || loading.live}
               onClick={() => handle('live', () => adminSyncLive(user, pass, {
                 show_name: selectedLive.name,
-                show_id: liveShowId || '',
-                prelims_url: livePrelimsUrl,
-                finals_url: liveFinalsUrl,
+                show_id: selectedLive.show_id,
+                prelims_url: selectedLive.p_url,
+                finals_url: selectedLive.f_url,
               }))}
             >
               {loading.live ? 'Syncing...' : '📡 Latch & Sync'}
@@ -272,9 +250,93 @@ export default function Admin() {
         </div>
 
 
+        {/* World Championships */}
+        <div className="card" style={{ padding: 24, gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700 }}>5. World Championships</h3>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setWorldsExpanded(e => !e)}>
+              {worldsExpanded ? '▲ Collapse' : '▼ Expand Sessions'}
+            </button>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
+            Auto-discovers all World Championship sessions from the WGI schedule page. Then scrape each session individually and set ShowIDs as WGI posts them.
+          </p>
+          <button
+            className="btn btn-primary"
+            style={{ marginBottom: 16 }}
+            disabled={loading.worldsDiscover}
+            onClick={() => handle('worldsDiscover', () =>
+              fetch('/api/admin/worlds-discover', {
+                method: 'POST',
+                headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+              })
+            )}
+          >
+            {loading.worldsDiscover ? 'Discovering...' : '🌍 Auto-Discover Sessions'}
+          </button>
+
+          {worldsExpanded && worldsSessions.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {['prelims', 'semis', 'finals'].map(round => {
+                const roundSessions = worldsSessions.filter(s => s.round === round)
+                if (!roundSessions.length) return null
+                return (
+                  <div key={round} style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Barlow Condensed, sans-serif', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 10 }}>
+                      {round === 'prelims' ? 'Prelims' : round === 'semis' ? 'Semi-Finals' : 'Finals'}
+                    </div>
+                    {roundSessions.map(s => (
+                      <div key={s.session_id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', marginBottom: 8, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue} · {s.day}</div>
+                          {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)' }}>ShowID: {s.show_id}</div>}
+                          {s.status && <div style={{ fontSize: 11, color: s.status === 'live' ? 'var(--green)' : 'var(--text-muted)' }}>{s.status === 'live' ? '🟢 Live' : '📋 Roster Only'}</div>}
+                        </div>
+                        <input
+                          className="input"
+                          placeholder="ShowID (optional)"
+                          style={{ width: 160, fontSize: 12 }}
+                          value={worldsShowIds[s.session_id] || s.show_id || ''}
+                          onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
+                        />
+                        <button
+                          className="btn btn-primary"
+                          style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
+                          disabled={loading[`worlds_${s.session_id}`]}
+                          onClick={() => handle(`worlds_${s.session_id}`, () =>
+                            fetch('/api/admin/worlds-session', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Basic ' + btoa('admin:' + pass)
+                              },
+                              body: JSON.stringify({
+                                session_id: s.session_id,
+                                show_id: worldsShowIds[s.session_id] || s.show_id || ''
+                              })
+                            }).then(() =>
+                              fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
+                            )
+                          )}
+                        >
+                          {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {worldsExpanded && worldsSessions.length === 0 && (
+            <div className="alert alert-info">No sessions discovered yet. Click Auto-Discover first.</div>
+          )}
+        </div>
+
         {/* Group Standings */}
         <div className="card" style={{ padding: 24 }}>
-          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>5. Group Standings</h3>
+          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>6. Group Standings</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
             Scrapes the official WGI Group Standings page for all 6 classes. Run every Tuesday after noon Eastern.
           </p>

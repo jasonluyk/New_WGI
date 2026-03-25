@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 const navItems = [
   { path: '/', label: 'National' },
   { path: '/live', label: 'Live Hub' },
+  { path: '/worlds', label: '🏆 Worlds' },
   { path: '/projector', label: 'Projector' },
   { path: '/past', label: 'Past Events' },
   { path: '/standings', label: 'Standings' },

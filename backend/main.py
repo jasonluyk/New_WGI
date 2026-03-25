@@ -190,83 +190,61 @@ def get_standings():
 
 
 # =====================================================================
-# SEASON STANDINGS (all guards, ranked by most recent score)
+# WORLD CHAMPIONSHIPS
 # =====================================================================
-@app.get("/api/all-guards")
-def get_all_guards():
-    from collections import defaultdict
 
-    CLASS_ORDER = [
-        "Scholastic A", "Scholastic Open", "Scholastic World",
-        "Independent A", "Independent Open", "Independent World"
-    ]
+@app.get("/api/worlds/sessions")
+def get_worlds_sessions():
+    """Returns all discovered World Championship sessions."""
+    sessions = list(db["worlds_sessions"].find({}, {"_id": 0}))
+    return {"sessions": sorted(sessions, key=lambda x: (x.get("day", ""), x.get("round", ""), x.get("name", "")))}
 
-    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0}))
+@app.get("/api/worlds/state")
+def get_worlds_state():
+    """Returns all session data merged into a unified view for the frontend."""
+    sessions = list(db["worlds_state"].find({}, {"_id": 0}))
+    return {"data": sessions}
 
-    # Group by (Guard, Class)
-    guard_map = defaultdict(list)
-    for row in all_scores:
-        key = (row["Guard"], row["Class"])
-        guard_map[key].append(row)
+@app.post("/api/admin/worlds-discover")
+def admin_worlds_discover(username: str = Depends(verify_admin)):
+    """Triggers auto-discovery of World Championship sessions."""
+    db["system_state"].insert_one({
+        "type": "scraper_command",
+        "action": "sync_worlds_discover"
+    })
+    return {"message": "World Championship discovery command sent."}
 
-    results = []
-    for (guard, cls), rows in guard_map.items():
-        # Group by base show name, prefer finals over prelims
-        show_map = defaultdict(dict)
-        for row in rows:
-            show = row.get("Show", "")
-            is_finals = "final" in show.lower()
-            base = show.lower().replace("finals", "").replace("final", "").strip()
-            if is_finals:
-                show_map[base]["finals"] = row
-            else:
-                show_map[base]["prelims"] = row
+@app.post("/api/admin/worlds-session")
+def admin_worlds_session(payload: dict, username: str = Depends(verify_admin)):
+    """Triggers a scrape of a specific World Championship session."""
+    db["system_state"].insert_one({
+        "type": "scraper_command",
+        "action": "sync_worlds_session",
+        "session_id": payload.get("session_id"),
+        "show_id": payload.get("show_id", "")
+    })
+    # Save ShowID to session doc if provided
+    if payload.get("show_id"):
+        db["worlds_sessions"].update_one(
+            {"session_id": payload.get("session_id")},
+            {"$set": {"show_id": payload.get("show_id")}},
+            upsert=True
+        )
+    return {"message": f"Worlds session sync command sent for {payload.get('session_id')}."}
 
-        # Build per-show best score (finals > prelims)
-        all_show_scores = []
-        for base, entries in show_map.items():
-            best = entries.get("finals") or entries.get("prelims")
-            all_show_scores.append({
-                "Show": best["Show"],
-                "Score": best["Score"],
-                "Date": best.get("Date")
-            })
+@app.post("/api/admin/worlds-set-showid")
+def admin_worlds_set_showid(payload: dict, username: str = Depends(verify_admin)):
+    """Manually sets a ShowID for a World Championship session."""
+    db["worlds_sessions"].update_one(
+        {"session_id": payload.get("session_id")},
+        {"$set": {"show_id": payload.get("show_id")}},
+        upsert=True
+    )
+    return {"message": f"ShowID set for {payload.get('session_id')}."}
 
-        # Sort show history chronologically for the modal chart
-        all_show_scores.sort(key=lambda x: x.get("Date") or x["Show"])
-
-        season_high = max(s["Score"] for s in all_show_scores)
-        season_avg = round(sum(s["Score"] for s in all_show_scores) / len(all_show_scores), 3)
-
-        # Best show = highest score
-        best_show = max(all_show_scores, key=lambda x: x["Score"])
-
-        results.append({
-            "Guard": guard,
-            "Class": cls,
-            "Latest_Score": round(season_high, 3),     # ranked by season high
-            "Latest_Show": best_show["Show"],           # show where they scored highest
-            "Made_Finals": "final" in best_show["Show"].lower(),
-            "Season_High": round(season_high, 3),
-            "Season_Avg": season_avg,
-            "Shows": len(show_map),
-            "All_Scores": all_show_scores
-        })
-
-    # Sort by class order then season high descending
-    results.sort(key=lambda x: (
-        CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
-        -x["Latest_Score"]
-    ))
-
-    # Rank within each class
-    class_rank = {}
-    for r in results:
-        c = r["Class"]
-        class_rank[c] = class_rank.get(c, 0) + 1
-        r["Rank"] = class_rank[c]
-
-    return {"data": results}
+# =====================================================================
+# ADMIN ENDPOINTS (password protected)
+# =====================================================================
 @app.post("/api/admin/discover")
 def admin_discover(username: str = Depends(verify_admin)):
     """Triggers auto-discovery of WGI events."""

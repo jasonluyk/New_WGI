@@ -391,33 +391,11 @@ def scrape_national_scores():
 # --- LIVE HUB ---
 # =====================================================================
 
-def fuzzy_match(admin_name, wgi_name):
-    """
-    More robust matching between admin show name and WGI show name.
-    e.g. "Buford +" should match "Buford Color Guard Regional"
-    Strips common noise words and matches on the core city/location name.
-    """
-    noise = ['color guard', 'colorguard', 'regional', 'championship', 'cg', '+', '-']
-    def clean(s):
-        s = s.lower()
-        for w in noise:
-            s = s.replace(w, '')
-        return s.strip()
-
-    a = clean(admin_name)
-    b = clean(wgi_name)
-
-    if not a or not b:
-        return False
-
-    # Match if either cleaned name starts with or contains the other
-    return a in b or b in a or a.split()[0] == b.split()[0]
-
-
 def poll_for_show_id(show_name):
     """
     Polls WGI scores page every 5 minutes looking for a ShowID matching
     the latched show name. Runs in a background daemon thread.
+    Uses same name extraction + fuzzy matching logic as Hop 3.
     """
     print(f"🔍 [WORKER] Background polling for ShowID: {show_name}...")
 
@@ -435,52 +413,49 @@ def poll_for_show_id(show_name):
                 soup = BeautifulSoup(page.content(), 'html.parser')
                 browser.close()
 
-            found_id = None
-            for link in soup.find_all('a', href=True):
-                href = link['href']
-                if 'ShowId=' not in href:
-                    continue
+                for link in soup.find_all('a', href=True):
+                    href = link['href']
+                    if 'ShowId=' not in href:
+                        continue
 
-                # Extract show name from link or parent row
-                link_name = link.get_text(strip=True)
-                if not link_name or "View" in link_name or "Score" in link_name:
-                    row = link.find_parent('tr')
-                    if row:
-                        cols = row.find_all('td')
-                        if cols:
-                            link_name = cols[0].get_text(strip=True)
+                    # Same name extraction as Hop 3
+                    link_name = link.get_text(strip=True)
+                    if not link_name or "View" in link_name or "Score" in link_name:
+                        row = link.find_parent('tr')
+                        if row:
+                            cols = row.find_all('td')
+                            if cols:
+                                link_name = cols[0].get_text(strip=True)
 
-                extracted_id = href.split("ShowId=")[-1]
-                print(f"  Checking: '{link_name}' vs '{show_name}'")
+                    clean_name = link_name.split("Regional")[0].strip() if link_name else ""
+                    extracted_id = href.split("ShowId=")[-1]
 
-                if fuzzy_match(show_name, link_name):
-                    found_id = extracted_id
-                    print(f"🎯 [WORKER] ShowID found for {show_name}: {found_id} (matched '{link_name}')")
-                    break
+                    # Same fuzzy match as Hop 3
+                    if clean_name.lower() in show_name.lower() or show_name.lower() in clean_name.lower():
+                        print(f"🎯 [WORKER] ShowID found for {show_name}: {extracted_id}")
 
-            if found_id:
-                # Update MongoDB with discovered ShowID
-                db["event_metadata"].update_one(
-                    {"name": show_name},
-                    {"$set": {"show_id": found_id}},
-                    upsert=True
-                )
-                db["system_state"].update_one(
-                    {"type": "active_show_name"},
-                    {"$set": {"show_id": found_id}},
-                    upsert=True
-                )
+                        # Update event_metadata and active_show_name with discovered ShowID
+                        db["event_metadata"].update_one(
+                            {"name": show_name},
+                            {"$set": {"show_id": extracted_id}},
+                            upsert=True
+                        )
+                        db["system_state"].update_one(
+                            {"type": "active_show_name"},
+                            {"$set": {"show_id": extracted_id}},
+                            upsert=True
+                        )
 
-                # Re-run live scrape with ShowID — schedule URLs preserved from live_state
-                session = db["live_state"].find_one({"type": "current_session"})
-                if session:
-                    scrape_live_show(
-                        show_name,
-                        session.get("prelims_url"),
-                        session.get("finals_url"),
-                        show_id=found_id
-                    )
-                return  # Done — thread exits
+                        # Re-run live scrape now with ShowID
+                        session = db["live_state"].find_one({"type": "current_session"})
+                        if session:
+                            scrape_live_show(
+                                show_name,
+                                session.get("prelims_url"),
+                                session.get("finals_url"),
+                                show_id=extracted_id
+                            )
+                        return  # Stop polling once found
 
         except Exception as e:
             print(f"⚠️ [WORKER] Poll error: {e}")
@@ -730,6 +705,210 @@ def scrape_projection(show_name, prelims_url, finals_url):
         )
 
 
+
+# =====================================================================
+# --- WORLDS SCRAPER ---
+# =====================================================================
+
+def scrape_worlds_schedule():
+    """
+    Scrapes the WGI World Championships schedule page to auto-discover
+    all session URLs (prelims/semis/finals per class/venue).
+    Saves discovered sessions to db["worlds_sessions"].
+    """
+    print("🌍 [WORKER] Auto-discovering World Championship sessions...")
+    WORLDS_URL = "https://www.wgi.org/color-guard/cg-schedule/"
+
+    sessions = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        context = browser.new_context(user_agent=USER_AGENT)
+        page = context.new_page()
+        try:
+            page.goto(WORLDS_URL, timeout=60000, wait_until="domcontentloaded")
+            page.wait_for_timeout(5000)
+            soup = BeautifulSoup(page.content(), 'html.parser')
+
+            current_day = ""
+            current_venue = ""
+
+            for el in soup.find_all(['h2', 'h3', 'h4', 'p', 'li', 'a']):
+                text = el.get_text(strip=True)
+
+                # Detect day headers
+                if re.search(r'(thursday|friday|saturday|sunday)', text, re.IGNORECASE):
+                    current_day = text
+                    continue
+
+                # Detect venue headers
+                if any(v in text for v in ['Arena', 'Center', 'University', 'Convention']):
+                    current_venue = text
+                    continue
+
+                # Detect schedule links
+                if el.name == 'a' and el.get('href'):
+                    href = el['href']
+                    link_text = el.get_text(strip=True).lower()
+                    if 'standard' in link_text and ('prelim' in text.lower() or 'semi' in text.lower() or 'final' in text.lower() or 'prelim' in link_text or 'semi' in link_text or 'final' in link_text):
+                        # Determine round
+                        if 'semi' in text.lower() or 'semi' in link_text:
+                            round_type = 'semis'
+                        elif 'final' in text.lower() or 'final' in link_text:
+                            round_type = 'finals'
+                        else:
+                            round_type = 'prelims'
+
+                        # Try to get session name from parent element
+                        parent = el.find_parent(['li', 'p', 'div'])
+                        session_name = parent.get_text(strip=True).split('–')[0].strip() if parent else text
+                        session_name = re.sub(r'\s+', ' ', session_name).strip()
+
+                        full_url = href if href.startswith('http') else f"https://www.wgi.org{href}"
+
+                        sessions.append({
+                            "session_id": re.sub(r'[^a-z0-9]', '_', session_name.lower()),
+                            "name": session_name,
+                            "day": current_day,
+                            "venue": current_venue,
+                            "round": round_type,
+                            "schedule_url": full_url,
+                            "show_id": "",
+                            "status": "pending"
+                        })
+                        print(f"  Found: {session_name} ({round_type}) @ {current_venue}")
+
+        except Exception as e:
+            print(f"⚠️ [WORKER] Worlds discovery error: {e}")
+        finally:
+            browser.close()
+
+    if sessions:
+        # Upsert each session — preserve existing show_ids if already set
+        for s in sessions:
+            existing = db["worlds_sessions"].find_one({"session_id": s["session_id"]})
+            if existing:
+                # Keep show_id if already set manually
+                s["show_id"] = existing.get("show_id", "")
+                s["status"] = existing.get("status", "pending")
+            db["worlds_sessions"].update_one(
+                {"session_id": s["session_id"]},
+                {"$set": s},
+                upsert=True
+            )
+        print(f"✅ [WORKER] Discovered {len(sessions)} World Championship sessions.")
+    else:
+        print("⚠️ [WORKER] No sessions found — page structure may have changed.")
+
+
+def scrape_worlds_session(session_id, show_id=None):
+    """
+    Scrapes a single World Championship session.
+    - Roster + times from schedule_url (CompSuite or PDF)
+    - Scores from WGI ShowID if available
+    - Merges with existing worlds_state data for advancement tracking
+    """
+    session = db["worlds_sessions"].find_one({"session_id": session_id})
+    if not session:
+        print(f"❌ [WORKER] Session not found: {session_id}")
+        return
+
+    session_name = session.get("name", session_id)
+    schedule_url = session.get("schedule_url", "")
+    effective_show_id = show_id or session.get("show_id", "")
+    round_type = session.get("round", "prelims")
+
+    print(f"🌍 [WORKER] Scraping Worlds session: {session_name} (round={round_type}, show_id={effective_show_id or 'none'})...")
+
+    combined_data = {}
+    class_spots = {}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        context = browser.new_context(user_agent=USER_AGENT)
+        page = context.new_page()
+
+        # --- PASS 1: Roster from schedule URL ---
+        if schedule_url:
+            if schedule_url.lower().endswith('.pdf'):
+                parse_pdf_schedule(schedule_url, combined_data)
+                count_pdf_finals_spots(schedule_url, class_spots)
+            else:
+                parse_html_schedule(schedule_url, combined_data, page)
+                count_html_finals_spots(schedule_url, class_spots, page)
+
+        # --- PASS 2: Scores from WGI ShowID ---
+        if effective_show_id:
+            wgi_url = f"https://www.wgi.org/scores/color-guard-score-event/?ShowId={effective_show_id}"
+            print(f"📡 Pulling scores from: {wgi_url}")
+            try:
+                page.goto(wgi_url)
+                page.wait_for_timeout(4000)
+                soup = BeautifulSoup(page.content(), 'html.parser')
+                raw_class = "Unknown Class"
+                for table in soup.find_all('table'):
+                    for row in table.find_all('tr'):
+                        th_cells = row.find_all('th')
+                        if th_cells:
+                            if len(th_cells) == 1:
+                                raw_class = th_cells[0].get_text(strip=True)
+                            elif row.find(['th', 'td'], class_='division-name'):
+                                raw_class = row.find(['th', 'td'], class_='division-name').get_text(strip=True)
+                            continue
+                        cols = row.find_all('td')
+                        if len(cols) >= 3:
+                            team_name = cols[1].get_text(strip=True)
+                            score_text = cols[2].get_text(strip=True).upper().replace("VIEW RECAP", "").strip()
+                            try:
+                                score = float(score_text)
+                            except ValueError:
+                                continue
+                            if not team_name:
+                                continue
+                            base_class = clean_class_name(raw_class)
+                            if team_name not in combined_data:
+                                combined_data[team_name] = {
+                                    "Guard": team_name, "Class": base_class,
+                                    "Prelims Time": "Finished", "Prelims Score": 0.0,
+                                    "Finals Time": "", "Finals Score": 0.0
+                                }
+                            combined_data[team_name]["Prelims Score"] = score
+                            combined_data[team_name]["Prelims Time"] = "✅"
+            except Exception as e:
+                print(f"⚠️ Score scrape error: {e}")
+
+        browser.close()
+
+    if not combined_data:
+        print(f"❌ No data found for session: {session_name}")
+        return
+
+    # Update session status
+    db["worlds_sessions"].update_one(
+        {"session_id": session_id},
+        {"$set": {
+            "show_id": effective_show_id,
+            "spots": class_spots,
+            "status": "live" if effective_show_id else "roster_only"
+        }}
+    )
+
+    # Save session data to worlds_state keyed by session_id
+    db["worlds_state"].update_one(
+        {"session_id": session_id},
+        {"$set": {
+            "session_id": session_id,
+            "session_name": session_name,
+            "round": round_type,
+            "day": session.get("day", ""),
+            "venue": session.get("venue", ""),
+            "data": list(combined_data.values()),
+            "spots": class_spots,
+            "status": "live" if effective_show_id else "roster_only"
+        }},
+        upsert=True
+    )
+    print(f"✅ [WORKER] Saved {len(combined_data)} guards for {session_name}.")
+
 # =====================================================================
 # --- THE WORKER BRAIN (Command Listener) ---
 # =====================================================================
@@ -783,6 +962,15 @@ if __name__ == "__main__":
 
                 elif action == "sync_standings":
                     scrape_group_standings()
+
+                elif action == "sync_worlds_discover":
+                    scrape_worlds_schedule()
+
+                elif action == "sync_worlds_session":
+                    scrape_worlds_session(
+                        command.get("session_id"),
+                        show_id=command.get("show_id")
+                    )
 
             except Exception as e:
                 print(f"❌ [WORKER] Fatal error executing command '{action}': {e}")

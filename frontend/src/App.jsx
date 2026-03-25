@@ -6,6 +6,7 @@ import Projector from './pages/Projector'
 import PastEvents from './pages/PastEvents'
 import Standings from './pages/Standings'
 import Admin from './pages/Admin'
+import Worlds from './pages/Worlds'
 import './index.css'
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/past" element={<PastEvents />} />
           <Route path="/standings" element={<Standings />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/worlds" element={<Worlds />} />
         </Routes>
       </div>
     </BrowserRouter>
