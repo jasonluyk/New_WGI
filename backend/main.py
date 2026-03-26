@@ -217,19 +217,24 @@ def admin_worlds_discover(username: str = Depends(verify_admin)):
 @app.post("/api/admin/worlds-session")
 def admin_worlds_session(payload: dict, username: str = Depends(verify_admin)):
     """Triggers a scrape of a specific World Championship session."""
+    update = {}
+    if payload.get("show_id"):
+        update["show_id"] = payload.get("show_id")
+    if payload.get("schedule_url"):
+        update["schedule_url"] = payload.get("schedule_url")
+    if update:
+        db["worlds_sessions"].update_one(
+            {"session_id": payload.get("session_id")},
+            {"$set": update},
+            upsert=True
+        )
     db["system_state"].insert_one({
         "type": "scraper_command",
         "action": "sync_worlds_session",
         "session_id": payload.get("session_id"),
-        "show_id": payload.get("show_id", "")
+        "show_id": payload.get("show_id", ""),
+        "schedule_url": payload.get("schedule_url", "")
     })
-    # Save ShowID to session doc if provided
-    if payload.get("show_id"):
-        db["worlds_sessions"].update_one(
-            {"session_id": payload.get("session_id")},
-            {"$set": {"show_id": payload.get("show_id")}},
-            upsert=True
-        )
     return {"message": f"Worlds session sync command sent for {payload.get('session_id')}."}
 
 @app.post("/api/admin/worlds-set-showid")

@@ -18,6 +18,7 @@ export default function Admin() {
   const [worldsSessions, setWorldsSessions] = useState([])
   const [worldsExpanded, setWorldsExpanded] = useState(false)
   const [worldsShowIds, setWorldsShowIds] = useState({})
+  const [worldsUrls, setWorldsUrls] = useState({})
 
   const user = 'admin'
 
@@ -286,42 +287,53 @@ export default function Admin() {
                       {round === 'prelims' ? 'Prelims' : round === 'semis' ? 'Semi-Finals' : 'Finals'}
                     </div>
                     {roundSessions.map(s => (
-                      <div key={s.session_id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', marginBottom: 8, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue} · {s.day}</div>
-                          {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)' }}>ShowID: {s.show_id}</div>}
-                          {s.status && <div style={{ fontSize: 11, color: s.status === 'live' ? 'var(--green)' : 'var(--text-muted)' }}>{s.status === 'live' ? '🟢 Live' : '📋 Roster Only'}</div>}
+                      <div key={s.session_id} style={{ marginBottom: 10, padding: '12px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue} · {s.day}</div>
+                            {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>ShowID: {s.show_id}</div>}
+                            <div style={{ fontSize: 11, color: s.status === 'live' ? 'var(--green)' : 'var(--text-muted)', marginTop: 2 }}>
+                              {s.status === 'live' ? '🟢 Live' : s.status === 'roster_only' ? '📋 Roster Only' : '⏳ Pending'}
+                            </div>
+                          </div>
+                          <button
+                            className="btn btn-primary"
+                            style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
+                            disabled={loading[`worlds_${s.session_id}`] || (!worldsUrls[s.session_id] && !s.schedule_url && !worldsShowIds[s.session_id] && !s.show_id)}
+                            onClick={() => handle(`worlds_${s.session_id}`, () =>
+                              fetch('/api/admin/worlds-session', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa('admin:' + pass) },
+                                body: JSON.stringify({
+                                  session_id: s.session_id,
+                                  show_id: worldsShowIds[s.session_id] || s.show_id || '',
+                                  schedule_url: worldsUrls[s.session_id] || s.schedule_url || ''
+                                })
+                              }).then(() =>
+                                fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
+                              )
+                            )}
+                          >
+                            {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
+                          </button>
                         </div>
-                        <input
-                          className="input"
-                          placeholder="ShowID (optional)"
-                          style={{ width: 160, fontSize: 12 }}
-                          value={worldsShowIds[s.session_id] || s.show_id || ''}
-                          onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
-                        />
-                        <button
-                          className="btn btn-primary"
-                          style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
-                          disabled={loading[`worlds_${s.session_id}`]}
-                          onClick={() => handle(`worlds_${s.session_id}`, () =>
-                            fetch('/api/admin/worlds-session', {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': 'Basic ' + btoa('admin:' + pass)
-                              },
-                              body: JSON.stringify({
-                                session_id: s.session_id,
-                                show_id: worldsShowIds[s.session_id] || s.show_id || ''
-                              })
-                            }).then(() =>
-                              fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
-                            )
-                          )}
-                        >
-                          {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
-                        </button>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <input
+                            className="input"
+                            placeholder="Schedule URL (CompSuite or PDF)"
+                            style={{ fontSize: 11 }}
+                            value={worldsUrls[s.session_id] ?? s.schedule_url ?? ''}
+                            onChange={e => setWorldsUrls(u => ({ ...u, [s.session_id]: e.target.value }))}
+                          />
+                          <input
+                            className="input"
+                            placeholder="WGI Show ID (when posted)"
+                            style={{ fontSize: 11 }}
+                            value={worldsShowIds[s.session_id] ?? s.show_id ?? ''}
+                            onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>
