@@ -713,74 +713,86 @@ def scrape_projection(show_name, prelims_url, finals_url):
 def scrape_worlds_schedule():
     """
     Scrapes the WGI World Championships schedule page to auto-discover
-    all session URLs (prelims/semis/finals per class/venue).
-    Saves discovered sessions to db["worlds_sessions"].
+    all session URLs. Matches CompSuite/PDF links to known sessions by
+    scanning the surrounding text for session name context.
     """
     print("🌍 [WORKER] Auto-discovering World Championship sessions...")
     WORLDS_URL = "https://www.wgi.org/color-guard/world-championships-cg/world-championships-schedules-cg/"
 
-    sessions = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(user_agent=USER_AGENT)
-        page = context.new_page()
-        try:
+    # Known sessions with their identifying keywords for URL matching
+    KNOWN_SESSIONS = [
+        {"session_id": "independent_open_prelims_dayton", "name": "Independent Open Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent open", "prelim"]},
+        {"session_id": "scholastic_world_prelims", "name": "Scholastic World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic world", "prelim"]},
+        {"session_id": "independent_world_prelims", "name": "Independent World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent world", "prelim"]},
+        {"session_id": "scholastic_open_prelims_nutter", "name": "Scholastic Open Prelims", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic open", "prelim"]},
+        {"session_id": "independent_open_prelims_nutter", "name": "Independent Open Prelims (Nutter)", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent open", "prelim", "nutter"]},
+        {"session_id": "scholastic_a_prelims_cintas", "name": "Scholastic A Prelims (Cintas)", "venue": "Cintas Center at Xavier", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic a", "prelim", "cintas"]},
+        {"session_id": "scholastic_a_prelims_truist", "name": "Scholastic A Prelims (Truist)", "venue": "Truist Arena at Northern Kentucky University", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic a", "prelim", "truist"]},
+        {"session_id": "independent_a_prelims", "name": "Independent A Prelims", "venue": "Dayton Convention Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent a", "prelim"]},
+        {"session_id": "scholastic_world_semis", "name": "Scholastic World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic world", "semi"]},
+        {"session_id": "independent_world_semis", "name": "Independent World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent world", "semi"]},
+        {"session_id": "a_class_finals", "name": "A Class Finals (IA/SA)", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "finals", "keywords": ["a class", "final"]},
+        {"session_id": "scholastic_a_semis_nutter", "name": "Scholastic A Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic a", "semi"]},
+        {"session_id": "independent_open_semis", "name": "Independent Open Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent open", "semi"]},
+        {"session_id": "independent_a_semis", "name": "Independent A Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent a", "semi"]},
+        {"session_id": "scholastic_open_semis", "name": "Scholastic Open Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic open", "semi"]},
+        {"session_id": "open_class_finals", "name": "Open Class Finals (SO/IO)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "keywords": ["open class", "final"]},
+        {"session_id": "world_class_finals", "name": "World Class Finals (SW/IW)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "keywords": ["world class", "final"]},
+    ]
+
+    # Initialize sessions from known list
+    sessions = [{**s, "schedule_url": "", "show_id": "", "status": "pending"} for s in KNOWN_SESSIONS]
+
+    # Try to scrape the page and match URLs to sessions
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
             page.goto(WORLDS_URL, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(6000)
             soup = BeautifulSoup(page.content(), 'html.parser')
-
-            current_day = ""
-            current_venue = ""
-
-            for el in soup.find_all(['h2', 'h3', 'h4', 'p', 'li', 'a']):
-                text = el.get_text(strip=True)
-
-                # Detect day headers
-                if re.search(r'(thursday|friday|saturday|sunday)', text, re.IGNORECASE):
-                    current_day = text
-                    continue
-
-                # Detect venue headers
-                if any(v in text for v in ['Arena', 'Center', 'University', 'Convention']):
-                    current_venue = text
-                    continue
-
-                # Detect schedule links
-                if el.name == 'a' and el.get('href'):
-                    href = el['href']
-                    link_text = el.get_text(strip=True).lower()
-                    if 'standard' in link_text and ('prelim' in text.lower() or 'semi' in text.lower() or 'final' in text.lower() or 'prelim' in link_text or 'semi' in link_text or 'final' in link_text):
-                        # Determine round
-                        if 'semi' in text.lower() or 'semi' in link_text:
-                            round_type = 'semis'
-                        elif 'final' in text.lower() or 'final' in link_text:
-                            round_type = 'finals'
-                        else:
-                            round_type = 'prelims'
-
-                        # Try to get session name from parent element
-                        parent = el.find_parent(['li', 'p', 'div'])
-                        session_name = parent.get_text(strip=True).split('–')[0].strip() if parent else text
-                        session_name = re.sub(r'\s+', ' ', session_name).strip()
-
-                        full_url = href if href.startswith('http') else f"https://www.wgi.org{href}"
-
-                        sessions.append({
-                            "session_id": re.sub(r'[^a-z0-9]', '_', session_name.lower()),
-                            "name": session_name,
-                            "day": current_day,
-                            "venue": current_venue,
-                            "round": round_type,
-                            "schedule_url": full_url,
-                            "show_id": "",
-                            "status": "pending"
-                        })
-                        print(f"  Found: {session_name} ({round_type}) @ {current_venue}")
-
-        except Exception as e:
-            print(f"⚠️ [WORKER] Worlds discovery error: {e}")
-        finally:
             browser.close()
+
+        # Find all schedule links (CompSuite or PDF)
+        schedule_links = []
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            link_text = a.get_text(strip=True).lower()
+            # Only grab standard schedule links (not logistical)
+            if ('competitionsuite' in href or href.lower().endswith('.pdf') or href.lower().endswith('.htm')) and 'logistical' not in link_text:
+                # Get surrounding context text
+                parent = a.find_parent(['li', 'p', 'div', 'td'])
+                context_text = parent.get_text(strip=True).lower() if parent else ''
+                full_url = href if href.startswith('http') else f"https://www.wgi.org{href}"
+                schedule_links.append({"url": full_url, "link_text": link_text, "context": context_text})
+                print(f"  Found link: {link_text[:50]} -> {full_url[:60]}")
+
+        print(f"  Total schedule links found: {len(schedule_links)}")
+
+        # Match each link to the best known session by keyword overlap
+        used_urls = set()
+        for session in sessions:
+            keywords = session.get("keywords", [])
+            best_match = None
+            best_score = 0
+            for link in schedule_links:
+                if link["url"] in used_urls:
+                    continue
+                combined = link["link_text"] + " " + link["context"]
+                score = sum(1 for kw in keywords if kw in combined)
+                if score > best_score:
+                    best_score = score
+                    best_match = link
+            if best_match and best_score >= 2:
+                session["schedule_url"] = best_match["url"]
+                used_urls.add(best_match["url"])
+                print(f"  ✅ Matched: {session['name']} -> {best_match['url'][:60]}")
+            else:
+                print(f"  ⚠️  No URL match for: {session['name']}")
+
+    except Exception as e:
+        print(f"⚠️ [WORKER] Worlds page scrape error: {e} — using known sessions without URLs")
 
     # Known sessions — pre-seed from what WGI has published even if URLs not posted yet
     KNOWN_SESSIONS = [
