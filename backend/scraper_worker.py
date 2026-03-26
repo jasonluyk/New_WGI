@@ -794,64 +794,22 @@ def scrape_worlds_schedule():
     except Exception as e:
         print(f"⚠️ [WORKER] Worlds page scrape error: {e} — using known sessions without URLs")
 
-    # Known sessions — pre-seed from what WGI has published even if URLs not posted yet
-    KNOWN_SESSIONS = [
-        # Thursday April 9 — Prelims
-        {"name": "Independent Open Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Independent Open"]},
-        {"name": "Scholastic World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Scholastic World"]},
-        {"name": "Independent World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Independent World"]},
-        {"name": "Scholastic Open Prelims", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Scholastic Open"]},
-        {"name": "Independent Open Prelims (Nutter)", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Independent Open"]},
-        {"name": "Scholastic A Prelims (Cintas)", "venue": "Cintas Center at Xavier", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Scholastic A"]},
-        {"name": "Scholastic A Prelims (Truist)", "venue": "Truist Arena at Northern Kentucky University", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Scholastic A"]},
-        {"name": "Independent A Prelims", "venue": "Dayton Convention Center", "day": "Thursday April 9, 2026", "round": "prelims", "classes": ["Independent A"]},
-        # Friday April 10 — Semis
-        {"name": "Scholastic World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Scholastic World"]},
-        {"name": "Independent World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Independent World"]},
-        {"name": "A Class Finals (IA/SA)", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "finals", "classes": ["Independent A", "Scholastic A"]},
-        {"name": "Scholastic A Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Scholastic A"]},
-        {"name": "Independent Open Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Independent Open"]},
-        {"name": "Independent A Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Independent A"]},
-        {"name": "Scholastic Open Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "classes": ["Scholastic Open"]},
-        # Saturday April 11 — Finals
-        {"name": "Open Class Finals (SO/IO)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "classes": ["Scholastic Open", "Independent Open"]},
-        {"name": "World Class Finals (SW/IW)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "classes": ["Scholastic World", "Independent World"]},
-    ]
-
-    # Merge discovered sessions with known sessions
-    for ks in KNOWN_SESSIONS:
-        sid = re.sub(r'[^a-z0-9]', '_', ks["name"].lower())
-        if not any(s.get("session_id") == sid for s in sessions):
-            sessions.append({
-                "session_id": sid,
-                "name": ks["name"],
-                "day": ks["day"],
-                "venue": ks["venue"],
-                "round": ks["round"],
-                "classes": ks["classes"],
-                "schedule_url": "",
-                "show_id": "",
-                "status": "pending"
-            })
-
-    if sessions:
-        # Upsert each session — preserve existing show_ids and URLs if already set
-        for s in sessions:
-            existing = db["worlds_sessions"].find_one({"session_id": s["session_id"]})
-            if existing:
-                s["show_id"] = existing.get("show_id", "")
-                s["status"] = existing.get("status", "pending")
-                # Preserve manually entered URLs
-                if existing.get("schedule_url"):
-                    s["schedule_url"] = existing.get("schedule_url")
-            db["worlds_sessions"].update_one(
-                {"session_id": s["session_id"]},
-                {"$set": s},
-                upsert=True
-            )
-        print(f"✅ [WORKER] {len(sessions)} World Championship sessions ready.")
-    else:
-        print("⚠️ [WORKER] No sessions found.")
+    # Upsert sessions — preserve existing show_ids and manually entered URLs
+    for s in sessions:
+        existing = db["worlds_sessions"].find_one({"session_id": s["session_id"]})
+        if existing:
+            # Always keep manually set show_id
+            s["show_id"] = existing.get("show_id", "")
+            s["status"] = existing.get("status", "pending")
+            # Only overwrite schedule_url if we found a new one, else keep existing
+            if not s.get("schedule_url") and existing.get("schedule_url"):
+                s["schedule_url"] = existing.get("schedule_url")
+        db["worlds_sessions"].update_one(
+            {"session_id": s["session_id"]},
+            {"$set": s},
+            upsert=True
+        )
+    print(f"✅ [WORKER] {len(sessions)} World Championship sessions ready.")
 
 
 def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
