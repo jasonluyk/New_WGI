@@ -23,15 +23,11 @@ async def lifespan(app: FastAPI):
     yield
     print("🛑 WGI Analytics API shutting down...")
 
-app = FastAPI(
-    title="WGI Analytics API",
-    version="2.0.0",
-    lifespan=lifespan
-)
+app = FastAPI(title="WGI Analytics API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten this to your domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,19 +51,16 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 # =====================================================================
 @app.get("/api/national")
 def get_national():
-    """Returns all national scores from wgi_analytics."""
     items = list(db["wgi_analytics"].find({}, {"_id": 0}))
     return {"data": items}
 
 @app.get("/api/national/classes")
 def get_classes():
-    """Returns list of unique classes."""
     classes = db["wgi_analytics"].distinct("Class")
     return {"classes": sorted(classes)}
 
 @app.get("/api/national/{class_name}")
 def get_national_by_class(class_name: str):
-    """Returns national scores for a specific class, aggregated by guard."""
     pipeline = [
         {"$match": {"Class": class_name}},
         {"$group": {
@@ -86,13 +79,17 @@ def get_national_by_class(class_name: str):
         r["Average_Score"] = round(r["Average_Score"], 3)
     return {"data": results}
 
+# =====================================================================
+# NATIONAL / WGI GROUP STANDINGS (seedings page)
+# =====================================================================
 @app.get("/api/standings")
 def get_standings():
+    """Returns official WGI group standings (seedings page)."""
     data = list(db["group_standings"].find({}, {"_id": 0}))
-    status = db["system_state"].find_one({"type": "standings_status"}, {"_id": 0})
+    status_doc = db["system_state"].find_one({"type": "standings_status"}, {"_id": 0})
     return {
         "data": data,
-        "updated": status.get("updated") if status else None
+        "updated": status_doc.get("updated") if status_doc else None
     }
 
 @app.post("/api/admin/sync-standings")
@@ -103,6 +100,76 @@ def admin_sync_standings(username: str = Depends(verify_admin)):
     })
     return {"message": "Standings sync command sent."}
 
+# =====================================================================
+# SEASON STANDINGS (all guards from wgi_analytics)
+# =====================================================================
+@app.get("/api/all-guards")
+def get_all_guards():
+    from collections import defaultdict
+
+    CLASS_ORDER = [
+        "Scholastic A", "Scholastic Open", "Scholastic World",
+        "Independent A", "Independent Open", "Independent World"
+    ]
+
+    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0}))
+
+    guard_map = defaultdict(list)
+    for row in all_scores:
+        key = (row["Guard"], row["Class"])
+        guard_map[key].append(row)
+
+    results = []
+    for (guard, cls), rows in guard_map.items():
+        # Group by base show name, prefer finals over prelims
+        show_map = defaultdict(dict)
+        for row in rows:
+            show = row.get("Show", "")
+            is_finals = "final" in show.lower()
+            base = show.lower().replace("finals", "").replace("final", "").strip()
+            if is_finals:
+                show_map[base]["finals"] = row
+            else:
+                show_map[base]["prelims"] = row
+
+        all_show_scores = []
+        for base, entries in show_map.items():
+            best = entries.get("finals") or entries.get("prelims")
+            all_show_scores.append({
+                "Show": best["Show"],
+                "Score": best["Score"],
+                "Date": best.get("Date")
+            })
+
+        all_show_scores.sort(key=lambda x: x.get("Date") or x["Show"])
+        season_high = max(s["Score"] for s in all_show_scores)
+        season_avg = round(sum(s["Score"] for s in all_show_scores) / len(all_show_scores), 3)
+        best_show = max(all_show_scores, key=lambda x: x["Score"])
+
+        results.append({
+            "Guard": guard,
+            "Class": cls,
+            "Latest_Score": round(season_high, 3),
+            "Latest_Show": best_show["Show"],
+            "Made_Finals": "final" in best_show["Show"].lower(),
+            "Season_High": round(season_high, 3),
+            "Season_Avg": season_avg,
+            "Shows": len(show_map),
+            "All_Scores": all_show_scores
+        })
+
+    results.sort(key=lambda x: (
+        CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
+        -x["Latest_Score"]
+    ))
+
+    class_rank = {}
+    for r in results:
+        c = r["Class"]
+        class_rank[c] = class_rank.get(c, 0) + 1
+        r["Rank"] = class_rank[c]
+
+    return {"data": results}
 
 @app.get("/api/guard-history")
 def get_guard_history(name: str, cls: str = None):
@@ -112,20 +179,24 @@ def get_guard_history(name: str, cls: str = None):
     data = list(db["wgi_analytics"].find(query, {"_id": 0}))
     return {"data": data}
 
-
 # =====================================================================
 # LIVE HUB
 # =====================================================================
 @app.get("/api/live")
 def get_live():
-    """Returns current live show data."""
     doc = db["live_state"].find_one({"type": "current_session"}, {"_id": 0})
     if not doc:
-        return {"data": [], "spots": {}, "show_name": None}
+        return {"data": [], "spots": {}, "show_name": None, "status": "none"}
+    # Fall back to active_show_name if show_name missing from doc
+    show_name = doc.get("show_name") or ""
+    if not show_name:
+        active = db["system_state"].find_one({"type": "active_show_name"}, {"_id": 0})
+        show_name = active.get("name", "") if active else ""
     return {
         "data": doc.get("data", []),
         "spots": doc.get("spots", {}),
-        "show_name": doc.get("show_name", "")
+        "show_name": show_name,
+        "status": doc.get("status", "roster_only")
     }
 
 # =====================================================================
@@ -133,7 +204,6 @@ def get_live():
 # =====================================================================
 @app.get("/api/projection")
 def get_projection():
-    """Returns current projection data."""
     doc = db["projection_state"].find_one({"type": "current_projection"}, {"_id": 0})
     if not doc:
         return {"data": [], "spots": {}, "show_name": None, "status": "none"}
@@ -149,13 +219,11 @@ def get_projection():
 # =====================================================================
 @app.get("/api/events")
 def get_events():
-    """Returns all discovered events from event_metadata."""
     events = list(db["event_metadata"].find({}, {"_id": 0}))
     return {"events": sorted(events, key=lambda x: x.get("name", ""))}
 
 @app.get("/api/events/{show_id}/archive")
 def get_archive(show_id: str):
-    """Returns archive scores for a specific show."""
     doc = db["archive_state"].find_one({"type": "current_archive", "show_id": show_id}, {"_id": 0})
     if not doc:
         return {"data": [], "status": "none", "event_name": ""}
@@ -166,48 +234,20 @@ def get_archive(show_id: str):
     }
 
 # =====================================================================
-# GROUP STANDINGS
-# =====================================================================
-@app.get("/api/standings")
-def get_standings():
-    """Returns season standings grouped by class — season high and average."""
-    pipeline = [
-        {"$group": {
-            "_id": {"Guard": "$Guard", "Class": "$Class"},
-            "Guard": {"$first": "$Guard"},
-            "Class": {"$first": "$Class"},
-            "Season_High": {"$max": "$Score"},
-            "Average_Score": {"$avg": "$Score"},
-            "Shows_Attended": {"$sum": 1}
-        }},
-        {"$sort": {"Class": 1, "Season_High": -1}}
-    ]
-    results = list(db["wgi_analytics"].aggregate(pipeline))
-    for r in results:
-        r.pop("_id", None)
-        r["Average_Score"] = round(r["Average_Score"], 3)
-    return {"data": results}
-
-
-# =====================================================================
 # WORLD CHAMPIONSHIPS
 # =====================================================================
-
 @app.get("/api/worlds/sessions")
 def get_worlds_sessions():
-    """Returns all discovered World Championship sessions."""
     sessions = list(db["worlds_sessions"].find({}, {"_id": 0}))
     return {"sessions": sorted(sessions, key=lambda x: (x.get("day", ""), x.get("round", ""), x.get("name", "")))}
 
 @app.get("/api/worlds/state")
 def get_worlds_state():
-    """Returns all session data merged into a unified view for the frontend."""
     sessions = list(db["worlds_state"].find({}, {"_id": 0}))
     return {"data": sessions}
 
 @app.post("/api/admin/worlds-discover")
 def admin_worlds_discover(username: str = Depends(verify_admin)):
-    """Triggers auto-discovery of World Championship sessions."""
     db["system_state"].insert_one({
         "type": "scraper_command",
         "action": "sync_worlds_discover"
@@ -216,7 +256,6 @@ def admin_worlds_discover(username: str = Depends(verify_admin)):
 
 @app.post("/api/admin/worlds-session")
 def admin_worlds_session(payload: dict, username: str = Depends(verify_admin)):
-    """Triggers a scrape of a specific World Championship session."""
     update = {}
     if payload.get("show_id"):
         update["show_id"] = payload.get("show_id")
@@ -239,7 +278,6 @@ def admin_worlds_session(payload: dict, username: str = Depends(verify_admin)):
 
 @app.post("/api/admin/worlds-set-showid")
 def admin_worlds_set_showid(payload: dict, username: str = Depends(verify_admin)):
-    """Manually sets a ShowID for a World Championship session."""
     db["worlds_sessions"].update_one(
         {"session_id": payload.get("session_id")},
         {"$set": {"show_id": payload.get("show_id")}},
@@ -252,7 +290,6 @@ def admin_worlds_set_showid(payload: dict, username: str = Depends(verify_admin)
 # =====================================================================
 @app.post("/api/admin/discover")
 def admin_discover(username: str = Depends(verify_admin)):
-    """Triggers auto-discovery of WGI events."""
     db["system_state"].insert_one({
         "type": "scraper_command",
         "action": "sync_national"
@@ -266,20 +303,19 @@ def admin_discover(username: str = Depends(verify_admin)):
 
 @app.post("/api/admin/seed")
 def admin_seed(username: str = Depends(verify_admin)):
-    """Triggers a full database seed via GitHub Actions webhook or direct call."""
     import subprocess
     try:
-        subprocess.Popen(["python", "/root/WGI-v2/backend/seed_db.py"])
+        subprocess.Popen(["python", "/root/New_WGI/backend/seed_db.py"])
         return {"message": "Seed started in background."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/sync-live")
 def admin_sync_live(payload: dict, username: str = Depends(verify_admin)):
-    """Triggers a live show scrape."""
     db["system_state"].insert_one({
         "type": "scraper_command",
         "action": "sync_live",
+        "show_name": payload.get("show_name"),
         "show_id": payload.get("show_id"),
         "prelims_url": payload.get("prelims_url"),
         "finals_url": payload.get("finals_url")
@@ -298,7 +334,6 @@ def admin_sync_live(payload: dict, username: str = Depends(verify_admin)):
 
 @app.post("/api/admin/sync-projection")
 def admin_sync_projection(payload: dict, username: str = Depends(verify_admin)):
-    """Triggers a projection build."""
     db["projection_state"].update_one(
         {"type": "current_projection"},
         {"$set": {"status": "loading", "show_name": payload.get("show_name")}},
@@ -315,7 +350,6 @@ def admin_sync_projection(payload: dict, username: str = Depends(verify_admin)):
 
 @app.post("/api/admin/sync-archive")
 def admin_sync_archive(payload: dict, username: str = Depends(verify_admin)):
-    """Triggers an archive scrape for a past event."""
     db["archive_state"].update_one(
         {"type": "current_archive"},
         {"$set": {
@@ -335,7 +369,6 @@ def admin_sync_archive(payload: dict, username: str = Depends(verify_admin)):
 
 @app.get("/api/admin/status")
 def admin_status(username: str = Depends(verify_admin)):
-    """Returns current system status for admin dashboard."""
     discovery = db["system_state"].find_one({"type": "discovery_status"}, {"_id": 0})
     active_show = db["system_state"].find_one({"type": "active_show_name"}, {"_id": 0})
     projection = db["projection_state"].find_one({"type": "current_projection"}, {"_id": 0})
