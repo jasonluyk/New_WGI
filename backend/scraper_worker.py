@@ -815,9 +815,12 @@ def scrape_worlds_schedule():
 def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
     """
     Scrapes a single World Championship session.
-    - Roster + times from schedule_url (CompSuite or PDF)
-    - Scores from WGI ShowID if available
-    - Merges with existing worlds_state data for advancement tracking
+    - Roster + times come from this session's schedule_url
+    - Advancement spots come from the NEXT round's schedule:
+        prelims  -> count guards in semis schedules (same class)
+        semis    -> count guards in finals schedules (same class)
+        finals   -> no spot count needed
+    - Scores come from WGI ShowID if available
     """
     session = db["worlds_sessions"].find_one({"session_id": session_id})
     if not session:
@@ -834,24 +837,49 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
     combined_data = {}
     class_spots = {}
 
+    # Determine which round provides the spot counts
+    next_round = {"prelims": "semis", "semis": "finals"}.get(round_type)
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
 
-        # --- PASS 1: Roster from schedule URL ---
+        # --- PASS 1: Roster from THIS session's schedule ---
         if schedule_url:
             if schedule_url.lower().endswith('.pdf'):
                 parse_pdf_schedule(schedule_url, combined_data)
-                count_pdf_finals_spots(schedule_url, class_spots)
             else:
                 parse_html_schedule(schedule_url, combined_data, page)
-                count_html_finals_spots(schedule_url, class_spots, page)
 
-        # --- PASS 2: Scores from WGI ShowID ---
+        print(f"  Roster: {len(combined_data)} guards found")
+
+        # --- PASS 2: Spot counts from NEXT round's schedules ---
+        if next_round:
+            next_sessions = list(db["worlds_sessions"].find(
+                {"round": next_round, "schedule_url": {"$ne": ""}},
+                {"_id": 0}
+            ))
+            print(f"  Counting spots from {len(next_sessions)} {next_round} sessions...")
+            for ns in next_sessions:
+                ns_url = ns.get("schedule_url", "")
+                if not ns_url:
+                    continue
+                try:
+                    if ns_url.lower().endswith('.pdf'):
+                        count_pdf_finals_spots(ns_url, class_spots)
+                    else:
+                        count_html_finals_spots(ns_url, class_spots, page)
+                except Exception as e:
+                    print(f"  ⚠️ Spot count error for {ns.get('name')}: {e}")
+            print(f"  Spots: {class_spots}")
+        else:
+            print(f"  Finals round — no spot count needed")
+
+        # --- PASS 3: Scores from WGI ShowID ---
         if effective_show_id:
             wgi_url = f"https://www.wgi.org/scores/color-guard-score-event/?ShowId={effective_show_id}"
-            print(f"📡 Pulling scores from: {wgi_url}")
+            print(f"  📡 Pulling scores: {wgi_url}")
             try:
                 page.goto(wgi_url)
                 page.wait_for_timeout(4000)
@@ -886,7 +914,7 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
                             combined_data[team_name]["Prelims Score"] = score
                             combined_data[team_name]["Prelims Time"] = "✅"
             except Exception as e:
-                print(f"⚠️ Score scrape error: {e}")
+                print(f"  ⚠️ Score scrape error: {e}")
 
         browser.close()
 
@@ -894,7 +922,7 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         print(f"❌ No data found for session: {session_name}")
         return
 
-    # Update session status
+    # Update session doc
     db["worlds_sessions"].update_one(
         {"session_id": session_id},
         {"$set": {
@@ -904,7 +932,7 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         }}
     )
 
-    # Save session data to worlds_state keyed by session_id
+    # Save to worlds_state
     db["worlds_state"].update_one(
         {"session_id": session_id},
         {"$set": {
