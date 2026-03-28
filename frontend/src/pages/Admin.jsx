@@ -15,10 +15,6 @@ export default function Admin() {
   const [selectedProjEvent, setSelectedProjEvent] = useState('')
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState({})
-  const [worldsSessions, setWorldsSessions] = useState([])
-  const [worldsExpanded, setWorldsExpanded] = useState(false)
-  const [worldsShowIds, setWorldsShowIds] = useState({})
-  const [worldsUrls, setWorldsUrls] = useState({})
 
   const user = 'admin'
 
@@ -51,7 +47,6 @@ export default function Admin() {
     if (authed) {
       fetchStatus()
       getEvents().then(res => setEvents(res.data.events))
-      fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
       const interval = setInterval(fetchStatus, 5000)
       return () => clearInterval(interval)
     }
@@ -238,7 +233,7 @@ export default function Admin() {
         {/* Archive */}
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>4. Past Events Archive</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Fetch finalized scores for a completed event.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Fetch finalized scores for completed events.</p>
           {status?.archive_status === 'loading' && (
             <div className="alert alert-warning" style={{ marginBottom: 12, gap: 8 }}>
               <div className="spinner" style={{ width: 14, height: 14 }} /> Fetching archive...
@@ -247,108 +242,25 @@ export default function Admin() {
           {status?.archive_status === 'complete' && (
             <div className="alert alert-success" style={{ marginBottom: 12 }}>✅ {status.archive_event}</div>
           )}
-          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Archive requests are triggered from the Past Events page directly.</p>
-        </div>
-
-
-        {/* World Championships */}
-        <div className="card" style={{ padding: 24, gridColumn: '1 / -1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700 }}>5. World Championships</h3>
-            <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setWorldsExpanded(e => !e)}>
-              {worldsExpanded ? '▲ Collapse' : '▼ Expand Sessions'}
-            </button>
-          </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
-            Auto-discovers all World Championship sessions from the WGI schedule page. Then scrape each session individually and set ShowIDs as WGI posts them.
-          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>Individual archive requests are triggered from the Past Events page. Use the button below to sync all discovered events at once.</p>
           <button
             className="btn btn-primary"
-            style={{ marginBottom: 16 }}
-            disabled={loading.worldsDiscover}
-            onClick={() => handle('worldsDiscover', () =>
-              fetch('/api/admin/worlds-discover', {
+            disabled={loading.syncAllFinals}
+            onClick={() => handle('syncAllFinals', () =>
+              fetch('/api/admin/sync-all-finals', {
                 method: 'POST',
                 headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
               })
             )}
           >
-            {loading.worldsDiscover ? 'Discovering...' : '🌍 Auto-Discover Sessions'}
+            {loading.syncAllFinals ? 'Queuing...' : '📥 Sync All Finals Events'}
           </button>
-
-          {worldsExpanded && worldsSessions.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {['prelims', 'semis', 'finals'].map(round => {
-                const roundSessions = worldsSessions.filter(s => s.round === round)
-                if (!roundSessions.length) return null
-                return (
-                  <div key={round} style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Barlow Condensed, sans-serif', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 10 }}>
-                      {round === 'prelims' ? 'Prelims' : round === 'semis' ? 'Semi-Finals' : 'Finals'}
-                    </div>
-                    {roundSessions.map(s => (
-                      <div key={s.session_id} style={{ marginBottom: 10, padding: '12px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue} · {s.day}</div>
-                            {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>ShowID: {s.show_id}</div>}
-                            <div style={{ fontSize: 11, color: s.status === 'live' ? 'var(--green)' : 'var(--text-muted)', marginTop: 2 }}>
-                              {s.status === 'live' ? '🟢 Live' : s.status === 'roster_only' ? '📋 Roster Only' : '⏳ Pending'}
-                            </div>
-                          </div>
-                          <button
-                            className="btn btn-primary"
-                            style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
-                            disabled={loading[`worlds_${s.session_id}`] || (!worldsUrls[s.session_id] && !s.schedule_url && !worldsShowIds[s.session_id] && !s.show_id)}
-                            onClick={() => handle(`worlds_${s.session_id}`, () =>
-                              fetch('/api/admin/worlds-session', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa('admin:' + pass) },
-                                body: JSON.stringify({
-                                  session_id: s.session_id,
-                                  show_id: worldsShowIds[s.session_id] || s.show_id || '',
-                                  schedule_url: worldsUrls[s.session_id] || s.schedule_url || ''
-                                })
-                              }).then(() =>
-                                fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
-                              )
-                            )}
-                          >
-                            {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
-                          </button>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                          <input
-                            className="input"
-                            placeholder="Schedule URL (CompSuite or PDF)"
-                            style={{ fontSize: 11 }}
-                            value={worldsUrls[s.session_id] ?? s.schedule_url ?? ''}
-                            onChange={e => setWorldsUrls(u => ({ ...u, [s.session_id]: e.target.value }))}
-                          />
-                          <input
-                            className="input"
-                            placeholder="WGI Show ID (when posted)"
-                            style={{ fontSize: 11 }}
-                            value={worldsShowIds[s.session_id] ?? s.show_id ?? ''}
-                            onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-          {worldsExpanded && worldsSessions.length === 0 && (
-            <div className="alert alert-info">No sessions discovered yet. Click Auto-Discover first.</div>
-          )}
         </div>
+
 
         {/* Group Standings */}
         <div className="card" style={{ padding: 24 }}>
-          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>6. Group Standings</h3>
+          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>5. Group Standings</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
             Scrapes the official WGI Group Standings page for all 6 classes. Run every Tuesday after noon Eastern.
           </p>
