@@ -16,7 +16,19 @@ export default function Admin() {
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState({})
 
+  // Live event manual overrides
+  const [livePrelimsUrl, setLivePrelimsUrl] = useState('')
+  const [liveFinalsUrl, setLiveFinalsUrl] = useState('')
+  const [liveShowId, setLiveShowId] = useState('')
+
+  // Worlds
+  const [worldsSessions, setWorldsSessions] = useState([])
+  const [worldsExpanded, setWorldsExpanded] = useState(false)
+  const [worldsShowIds, setWorldsShowIds] = useState({})
+  const [worldsUrls, setWorldsUrls] = useState({})
+
   const user = 'admin'
+  const pass = sessionStorage.getItem('admin_pass') || password
 
   const showToast = (msg) => {
     setToast(msg)
@@ -37,16 +49,19 @@ export default function Admin() {
     }
   }
 
-  const pass = sessionStorage.getItem('admin_pass') || password
-
   const fetchStatus = () => {
     adminStatus(user, pass).then(res => setStatus(res.data))
+  }
+
+  const fetchWorlds = () => {
+    fetch('/api/worlds/sessions').then(r => r.json()).then(res => setWorldsSessions(res.sessions || []))
   }
 
   useEffect(() => {
     if (authed) {
       fetchStatus()
       getEvents().then(res => setEvents(res.data.events))
+      fetchWorlds()
       const interval = setInterval(fetchStatus, 5000)
       return () => clearInterval(interval)
     }
@@ -67,6 +82,14 @@ export default function Admin() {
   const selectedLive = events.find(e => e.name === selectedLiveEvent)
   const selectedProj = events.find(e => e.name === selectedProjEvent)
 
+  const handleLiveEventSelect = (name) => {
+    setSelectedLiveEvent(name)
+    const evt = events.find(e => e.name === name)
+    setLivePrelimsUrl(evt?.p_url || '')
+    setLiveFinalsUrl(evt?.f_url || '')
+    setLiveShowId(evt?.show_id || '')
+  }
+
   if (!authed) return (
     <div style={{ maxWidth: 400, margin: '80px auto', padding: '0 24px' }}>
       <div className="card" style={{ padding: 32 }}>
@@ -74,13 +97,9 @@ export default function Admin() {
         <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 24 }}>Enter your password to continue</p>
         {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
         <input
-          className="input"
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && login()}
-          style={{ marginBottom: 12 }}
+          className="input" type="password" placeholder="Password"
+          value={password} onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && login()} style={{ marginBottom: 12 }}
         />
         <button className="btn btn-primary" style={{ width: '100%' }} onClick={login}>Login</button>
       </div>
@@ -97,9 +116,7 @@ export default function Admin() {
           borderRadius: 8, padding: '12px 20px', color: 'var(--text-primary)',
           fontFamily: 'Barlow Condensed, sans-serif', fontSize: 14, fontWeight: 600,
           boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
-        }}>
-          {toast}
-        </div>
+        }}>{toast}</div>
       )}
 
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -134,7 +151,7 @@ export default function Admin() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
 
-        {/* System Discovery */}
+        {/* 1. System Discovery */}
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>1. System Discovery</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Scrapes WGI calendar and scores page to find all events and ShowIDs.</p>
@@ -156,33 +173,47 @@ export default function Admin() {
           </div>
         </div>
 
-        {/* Live Event */}
+        {/* 2. Live Event */}
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>2. Live Event</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Latch onto a live competition to start tracking scores.</p>
-          <div style={{ marginBottom: 12 }}>
+          {status?.active_show && (
+            <div className="alert alert-success" style={{ marginBottom: 12 }}>📡 Active: {status.active_show}</div>
+          )}
+          <div style={{ marginBottom: 10 }}>
             <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>Select Event</label>
-            <select className="select" value={selectedLiveEvent} onChange={e => setSelectedLiveEvent(e.target.value)}>
+            <select className="select" value={selectedLiveEvent} onChange={e => handleLiveEventSelect(e.target.value)}>
               <option value="">— Choose Event —</option>
               {events.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
             </select>
           </div>
-          {selectedLive && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-              <div>ShowID: <code style={{ color: 'var(--accent)' }}>{selectedLive.show_id || 'Not posted yet'}</code></div>
-              <div>Prelims: <code>{selectedLive.p_url || 'Not set'}</code></div>
-              <div>Finals: <code>{selectedLive.f_url || 'Not set'}</code></div>
-            </div>
-          )}
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              Prelims URL <span style={{ fontWeight: 400, textTransform: 'none' }}>(CompSuite schedule)</span>
+            </label>
+            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={livePrelimsUrl} onChange={e => setLivePrelimsUrl(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              Finals URL <span style={{ fontWeight: 400, textTransform: 'none' }}>(optional)</span>
+            </label>
+            <input className="input" placeholder="https://schedules.competitionsuite.com/..." value={liveFinalsUrl} onChange={e => setLiveFinalsUrl(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              WGI Show ID <span style={{ fontWeight: 400, textTransform: 'none' }}>(leave blank to auto-detect)</span>
+            </label>
+            <input className="input" placeholder="e.g. 12345 — find at wgi.org/scores → hover event link" value={liveShowId} onChange={e => setLiveShowId(e.target.value)} />
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className="btn btn-primary"
-              disabled={!selectedLive?.p_url || loading.live}
+              disabled={!selectedLive || (!livePrelimsUrl && !liveShowId) || loading.live}
               onClick={() => handle('live', () => adminSyncLive(user, pass, {
                 show_name: selectedLive.name,
-                show_id: selectedLive.show_id,
-                prelims_url: selectedLive.p_url,
-                finals_url: selectedLive.f_url,
+                show_id: liveShowId || '',
+                prelims_url: livePrelimsUrl,
+                finals_url: liveFinalsUrl,
               }))}
             >
               {loading.live ? 'Syncing...' : '📡 Latch & Sync'}
@@ -193,10 +224,10 @@ export default function Admin() {
           </div>
         </div>
 
-        {/* Projector */}
+        {/* 3. Future Show Projector */}
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>3. Future Show Projector</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Build a projected standings for an upcoming show using season averages.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Build a projected standings for an upcoming show using season high scores.</p>
           {status?.projection_status === 'loading' && (
             <div className="alert alert-warning" style={{ marginBottom: 12, gap: 8 }}>
               <div className="spinner" style={{ width: 14, height: 14 }} /> Building projection...
@@ -230,7 +261,7 @@ export default function Admin() {
           </div>
         </div>
 
-        {/* Archive */}
+        {/* 4. Past Events Archive */}
         <div className="card" style={{ padding: 24 }}>
           <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>4. Past Events Archive</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>Fetch finalized scores for completed events.</p>
@@ -242,7 +273,9 @@ export default function Admin() {
           {status?.archive_status === 'complete' && (
             <div className="alert alert-success" style={{ marginBottom: 12 }}>✅ {status.archive_event}</div>
           )}
-          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>Individual archive requests are triggered from the Past Events page. Use the button below to sync all discovered events at once.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>
+            Individual archive requests can be triggered from the Past Events page. Use the button below to sync all discovered events at once.
+          </p>
           <button
             className="btn btn-primary"
             disabled={loading.syncAllFinals}
@@ -257,17 +290,124 @@ export default function Admin() {
           </button>
         </div>
 
+        {/* 5. World Championships */}
+        <div className="card" style={{ padding: 24, gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700 }}>5. World Championships</h3>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                disabled={loading.worldsDiscover}
+                onClick={() => handle('worldsDiscover', async () => {
+                  await fetch('/api/admin/worlds-discover', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                  })
+                  setTimeout(fetchWorlds, 3000)
+                })}
+              >
+                {loading.worldsDiscover ? 'Discovering...' : '🌍 Auto-Discover Sessions'}
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  if (confirm('Clear all Worlds session data?')) {
+                    fetch('/api/admin/worlds-clear', {
+                      method: 'DELETE',
+                      headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                    }).then(() => { fetchWorlds(); showToast('Worlds data cleared') })
+                  }
+                }}
+              >
+                🗑️ Clear Worlds
+              </button>
+              <button className="btn btn-secondary" onClick={() => setWorldsExpanded(e => !e)}>
+                {worldsExpanded ? '▲ Collapse' : '▼ Expand Sessions'}
+              </button>
+            </div>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>
+            Auto-discovers all World Championship sessions. Paste CompSuite URLs and ShowIDs as WGI posts them, then hit Sync per session.
+          </p>
 
-        {/* Group Standings */}
+          {worldsExpanded && (
+            <div style={{ marginTop: 12 }}>
+              {worldsSessions.length === 0 ? (
+                <div className="alert alert-info">No sessions yet — click Auto-Discover.</div>
+              ) : (
+                ['prelims', 'semis', 'finals'].map(round => {
+                  const roundSessions = worldsSessions.filter(s => s.round === round)
+                  if (!roundSessions.length) return null
+                  return (
+                    <div key={round} style={{ marginBottom: 24 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Barlow Condensed, sans-serif', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 10 }}>
+                        {round === 'prelims' ? 'Prelims — Thursday April 9' : round === 'semis' ? 'Semi-Finals — Friday April 10' : 'Finals — Friday/Saturday April 10–11'}
+                      </div>
+                      {roundSessions.map(s => (
+                        <div key={s.session_id} style={{ marginBottom: 10, padding: '12px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue}</div>
+                              {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>ShowID: {s.show_id}</div>}
+                              <div style={{ fontSize: 11, marginTop: 2, color: s.status === 'live' ? 'var(--green)' : s.status === 'roster_only' ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                {s.status === 'live' ? '🟢 Live' : s.status === 'roster_only' ? '📋 Roster Only' : '⏳ Pending'}
+                              </div>
+                            </div>
+                            <button
+                              className="btn btn-primary"
+                              style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
+                              disabled={loading[`worlds_${s.session_id}`] || (!worldsUrls[s.session_id] && !s.schedule_url && !worldsShowIds[s.session_id] && !s.show_id)}
+                              onClick={() => handle(`worlds_${s.session_id}`, async () => {
+                                await fetch('/api/admin/worlds-session', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa('admin:' + pass) },
+                                  body: JSON.stringify({
+                                    session_id: s.session_id,
+                                    show_id: worldsShowIds[s.session_id] || s.show_id || '',
+                                    schedule_url: worldsUrls[s.session_id] || s.schedule_url || ''
+                                  })
+                                })
+                                setTimeout(fetchWorlds, 2000)
+                              })}
+                            >
+                              {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
+                            </button>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <input
+                              className="input"
+                              placeholder="Schedule URL (CompSuite or PDF)"
+                              style={{ fontSize: 11 }}
+                              value={worldsUrls[s.session_id] ?? s.schedule_url ?? ''}
+                              onChange={e => setWorldsUrls(u => ({ ...u, [s.session_id]: e.target.value }))}
+                            />
+                            <input
+                              className="input"
+                              placeholder="WGI Show ID (when posted)"
+                              style={{ fontSize: 11 }}
+                              value={worldsShowIds[s.session_id] ?? s.show_id ?? ''}
+                              onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 6. Group Standings */}
         <div className="card" style={{ padding: 24 }}>
-          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>5. Group Standings</h3>
+          <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>6. Group Standings</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
             Scrapes the official WGI Group Standings page for all 6 classes. Run every Tuesday after noon Eastern.
           </p>
           {status?.standings_status === 'complete' && (
-            <div className="alert alert-success" style={{ marginBottom: 12 }}>
-              ✅ {status.standings_count} guards loaded
-            </div>
+            <div className="alert alert-success" style={{ marginBottom: 12 }}>✅ {status.standings_count} guards loaded</div>
           )}
           <button
             className="btn btn-primary"
@@ -276,7 +416,8 @@ export default function Admin() {
           >
             {loading.standings ? 'Syncing...' : '📊 Sync Standings'}
           </button>
-        </div>    
+        </div>
+
       </div>
     </div>
   )

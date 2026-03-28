@@ -386,6 +386,13 @@ def admin_clear_projection(username: str = Depends(verify_admin)):
     db["projection_state"].delete_many({})
     return {"message": "Projection cleared."}
 
+
+@app.delete("/api/admin/worlds-clear")
+def admin_worlds_clear(username: str = Depends(verify_admin)):
+    db["worlds_sessions"].delete_many({})
+    db["worlds_state"].delete_many({})
+    return {"message": "Worlds data cleared."}
+
 # =====================================================================
 # HEALTH CHECK
 # =====================================================================
