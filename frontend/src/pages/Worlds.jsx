@@ -19,40 +19,97 @@ function parseTime(timeStr) {
   return h * 60 + min
 }
 
-function buildAdvancement(sessions) {
-  // Build lookup: guardName+class -> set of rounds they appear in
-  const guardRounds = {}
-  for (const session of sessions) {
-    const round = session.round
+// Build a map of guardKey -> set of rounds they appear in (for advancement tracking)
+function buildAdvancementMap(allSessions) {
+  const map = {}
+  for (const session of allSessions) {
     for (const g of (session.data || [])) {
-      const key = `${g.Guard}||${g.Class}`
-      if (!guardRounds[key]) guardRounds[key] = new Set()
-      guardRounds[key].add(round)
+      const key = `${g.Guard}||${g.Class?.split(' - ')[0] || g.Class}`
+      if (!map[key]) map[key] = new Set()
+      map[key].add(session.round)
     }
   }
-  return guardRounds
+  return map
 }
 
-function getAdvancementStatus(guard, cls, round, guardRounds, spots, sessionData) {
+function getStatus(guard, cls, round, advMap) {
   const key = `${guard}||${cls}`
-  const rounds = guardRounds[key] || new Set()
-  const score = sessionData?.['Prelims Score'] || 0
-
+  const rounds = advMap[key] || new Set()
   if (round === 'prelims') {
     if (rounds.has('semis') || rounds.has('finals')) return '✅ To Semis'
-    if (score > 0) return '❌ Eliminated'
-    return '⏳ Pending'
+    return null // determine from score cutline
   }
   if (round === 'semis') {
     if (rounds.has('finals')) return '✅ To Finals'
-    if (score > 0) return '❌ Eliminated'
-    return '⏳ Pending'
+    return null
   }
-  if (round === 'finals') {
-    if (score > 0) return '🏆 Finalist'
-    return '⏳ Pending'
+  return null
+}
+
+function sortGuards(guards) {
+  const anyScored = guards.some(g => g['Prelims Score'] > 0)
+  return [...guards].sort((a, b) => {
+    if (!anyScored) return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
+    if (a['Prelims Score'] > 0 && b['Prelims Score'] > 0) return b['Prelims Score'] - a['Prelims Score']
+    if (a['Prelims Score'] > 0) return -1
+    if (b['Prelims Score'] > 0) return 1
+    return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
+  })
+}
+
+// For prelims: assign advancement status per venue based on spots
+function assignPrelimsStatus(guards, spotsPerVenue, advMap) {
+  // Group by venue
+  const byVenue = {}
+  for (const g of guards) {
+    const v = g.Venue || 'Unknown'
+    if (!byVenue[v]) byVenue[v] = []
+    byVenue[v].push(g)
   }
-  return '⏳ Pending'
+
+  const result = []
+  for (const [venue, vGuards] of Object.entries(byVenue)) {
+    const spots = spotsPerVenue[venue] || 0
+    const scored = vGuards.filter(g => g['Prelims Score'] > 0)
+      .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
+    const advSet = new Set(scored.slice(0, spots).map(g => g.Guard))
+
+    for (const g of vGuards) {
+      // Check if we know from advancement map (semis roster already synced)
+      const knownStatus = getStatus(g.Guard, g.Class?.split(' - ')[0] || g.Class, 'prelims', advMap)
+      let status = '⏳ Pending'
+      if (knownStatus) {
+        status = knownStatus
+      } else if (g['Prelims Score'] > 0) {
+        status = advSet.has(g.Guard) ? '✅ To Semis' : '❌ Eliminated'
+      }
+      result.push({ ...g, Status: status })
+    }
+  }
+  return result
+}
+
+// For semis/finals: assign status from advancement map or score cutline
+function assignRoundStatus(guards, spots, advMap, round) {
+  const scored = guards.filter(g => g['Prelims Score'] > 0)
+    .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
+  const advSet = new Set(scored.slice(0, spots).map(g => g.Guard))
+
+  return guards.map(g => {
+    const cls = g.Class?.split(' - ')[0] || g.Class
+    const knownStatus = getStatus(g.Guard, cls, round, advMap)
+    let status = '⏳ Pending'
+    if (knownStatus) {
+      status = knownStatus
+    } else if (g['Prelims Score'] > 0 && spots > 0) {
+      status = advSet.has(g.Guard)
+        ? (round === 'semis' ? '✅ To Finals' : '🏆 Finalist')
+        : '❌ Eliminated'
+    } else if (g['Prelims Score'] > 0 && round === 'finals') {
+      status = '🏆 Finalist'
+    }
+    return { ...g, Status: status }
+  })
 }
 
 export default function Worlds() {
@@ -60,6 +117,7 @@ export default function Worlds() {
   const [stateData, setStateData] = useState([])
   const [activeRound, setActiveRound] = useState('prelims')
   const [activeClass, setActiveClass] = useState(null)
+  const [activeVenue, setActiveVenue] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -81,58 +139,95 @@ export default function Worlds() {
     return () => clearInterval(interval)
   }, [])
 
-  // Get all sessions for active round
+  const advMap = buildAdvancementMap(stateData)
+
+  // Sessions for active round
   const roundSessions = stateData.filter(s => s.round === activeRound)
 
-  // Merge all guards for active round into one list per class
-  const allGuards = {}
-  for (const session of roundSessions) {
-    for (const g of (session.data || [])) {
-      const baseClass = g.Class?.split(' - ')[0] || g.Class
-      if (!allGuards[baseClass]) allGuards[baseClass] = {}
-      // If guard already exists keep highest score
-      const existing = allGuards[baseClass][g.Guard]
-      if (!existing || (g['Prelims Score'] || 0) > (existing['Prelims Score'] || 0)) {
-        allGuards[baseClass][g.Guard] = { ...g, Class: baseClass, Venue: session.venue }
-      }
-    }
-  }
-
-  const classes = Object.keys(allGuards).sort((a, b) => {
+  // All classes present in this round
+  const classes = [...new Set(
+    roundSessions.flatMap(s => (s.data || []).map(g => g.Class?.split(' - ')[0] || g.Class))
+  )].sort((a, b) => {
     const ai = CLASS_ORDER.indexOf(a), bi = CLASS_ORDER.indexOf(b)
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
   useEffect(() => {
-    if (classes.length && !activeClass) setActiveClass(classes[0])
-    else if (classes.length && !classes.includes(activeClass)) setActiveClass(classes[0])
-  }, [classes.join(',')])
+    if (classes.length && (!activeClass || !classes.includes(activeClass))) {
+      setActiveClass(classes[0])
+      setActiveVenue(null)
+    }
+  }, [activeRound, classes.join(',')])
 
-  // Build advancement lookup across ALL sessions
-  const guardRounds = buildAdvancement(stateData)
+  // Get all guards for active class in this round, tagged with venue
+  const classGuardsRaw = roundSessions.flatMap(s =>
+    (s.data || [])
+      .filter(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)
+      .map(g => ({ ...g, Class: activeClass, Venue: s.venue, SessionName: s.session_name }))
+  )
 
-  // Get spots for active class across all sessions of active round
-  const totalSpots = roundSessions.reduce((sum, s) => {
-    return sum + (s.spots?.[activeClass] || 0)
-  }, 0)
+  // Venues for this class in this round
+  const venues = [...new Set(classGuardsRaw.map(g => g.Venue))].filter(Boolean)
 
-  // Guards for active class
-  const classGuards = Object.values(allGuards[activeClass] || {})
-  const anyScored = classGuards.some(g => g['Prelims Score'] > 0)
+  useEffect(() => {
+    if (venues.length && (!activeVenue || !venues.includes(activeVenue))) {
+      setActiveVenue(activeRound === 'prelims' ? venues[0] : 'all')
+    }
+  }, [activeClass, activeRound, venues.join(',')])
 
-  const sortedGuards = [...classGuards].sort((a, b) => {
-    if (!anyScored) return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
-    if (a['Prelims Score'] > 0 && b['Prelims Score'] > 0) return b['Prelims Score'] - a['Prelims Score']
-    if (a['Prelims Score'] > 0) return -1
-    if (b['Prelims Score'] > 0) return 1
-    return parseTime(a['Prelims Time']) - parseTime(b['Prelims Time'])
-  }).map(g => ({
-    ...g,
-    Status: getAdvancementStatus(g.Guard, activeClass, activeRound, guardRounds, totalSpots, g)
-  }))
+  // Build spots per venue for prelims (from worlds_sessions spots)
+  const spotsPerVenue = {}
+  if (activeRound === 'prelims') {
+    for (const s of roundSessions) {
+      if ((s.data || []).some(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)) {
+        const venueSpots = s.spots?.[activeClass] || 0
+        spotsPerVenue[s.venue] = (spotsPerVenue[s.venue] || 0) + venueSpots
+      }
+    }
+  }
 
-  const scored = sortedGuards.filter(g => g['Prelims Score'] > 0)
-  const advancing = sortedGuards.filter(g => g.Status.includes('To') || g.Status.includes('Finalist'))
+  // Filter guards by venue tab
+  const venueGuards = activeRound === 'prelims' && activeVenue && activeVenue !== 'all'
+    ? classGuardsRaw.filter(g => g.Venue === activeVenue)
+    : classGuardsRaw
+
+  // Deduplicate for semis/finals (guard may appear in multiple session docs)
+  const deduped = activeRound !== 'prelims'
+    ? Object.values(
+        venueGuards.reduce((acc, g) => {
+          if (!acc[g.Guard] || (g['Prelims Score'] || 0) > (acc[g.Guard]['Prelims Score'] || 0))
+            acc[g.Guard] = g
+          return acc
+        }, {})
+      )
+    : venueGuards
+
+  // Get spots for semis/finals
+  const roundSpots = activeRound !== 'prelims'
+    ? roundSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
+    : 0
+
+  // Assign statuses
+  let displayGuards
+  if (activeRound === 'prelims') {
+    const withStatus = assignPrelimsStatus(deduped, spotsPerVenue, advMap)
+    // Show venue filter
+    const venueFiltered = activeVenue && activeVenue !== 'all'
+      ? withStatus.filter(g => g.Venue === activeVenue)
+      : withStatus
+    displayGuards = sortGuards(venueFiltered)
+  } else {
+    const withStatus = assignRoundStatus(deduped, roundSpots, advMap, activeRound)
+    displayGuards = sortGuards(withStatus)
+  }
+
+  const scored = displayGuards.filter(g => g['Prelims Score'] > 0)
+  const advancing = displayGuards.filter(g => g.Status?.includes('To') || g.Status?.includes('Finalist'))
+
+  // Venue spots for header display
+  const venueSpots = activeRound === 'prelims' && activeVenue && activeVenue !== 'all'
+    ? spotsPerVenue[activeVenue] || 0
+    : roundSpots
 
   const columns = [
     {
@@ -140,10 +235,6 @@ export default function Worlds() {
       render: v => <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{v}</span>
     },
     { key: 'Guard', label: 'Guard' },
-    {
-      key: 'Venue', label: 'Venue', width: 160,
-      render: v => <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{v}</span>
-    },
     {
       key: 'Prelims Score', label: 'Score', width: 100,
       render: v => v > 0
@@ -166,7 +257,6 @@ export default function Worlds() {
     },
   ]
 
-  // Available rounds (only show rounds that have data or are discovered)
   const availableRounds = ROUND_ORDER.filter(r =>
     stateData.some(s => s.round === r) || sessions.some(s => s.round === r)
   )
@@ -181,7 +271,7 @@ export default function Worlds() {
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 24px' }}>
       <h1 className="page-title">World Championships</h1>
       <div className="alert alert-info" style={{ marginTop: 20 }}>
-        No World Championship data yet. Use the Admin panel → World Championships → Auto-Discover Sessions to get started.
+        No World Championship data yet. Use Admin → World Championships → Auto-Discover Sessions.
       </div>
     </div>
   )
@@ -204,25 +294,16 @@ export default function Worlds() {
       </div>
 
       {/* Round tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
         {(availableRounds.length > 0 ? availableRounds : ROUND_ORDER).map(r => (
-          <button
-            key={r}
-            onClick={() => setActiveRound(r)}
-            style={{
-              padding: '10px 24px',
-              borderRadius: 8,
-              fontFamily: 'Barlow Condensed, sans-serif',
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: '0.05em',
-              cursor: 'pointer',
-              border: 'none',
-              background: activeRound === r ? 'var(--accent)' : 'var(--bg-card)',
-              color: activeRound === r ? '#0a0a0f' : 'var(--text-muted)',
-              borderBottom: activeRound === r ? 'none' : '1px solid var(--border)'
-            }}
-          >
+          <button key={r} onClick={() => { setActiveRound(r); setActiveVenue(null) }} style={{
+            padding: '10px 28px', borderRadius: 8,
+            fontFamily: 'Barlow Condensed, sans-serif', fontSize: 16, fontWeight: 700,
+            letterSpacing: '0.05em', cursor: 'pointer', border: 'none',
+            background: activeRound === r ? 'var(--accent)' : 'var(--bg-card)',
+            color: activeRound === r ? '#0a0a0f' : 'var(--text-muted)',
+            borderBottom: activeRound === r ? 'none' : '1px solid var(--border)'
+          }}>
             {ROUND_LABELS[r]}
           </button>
         ))}
@@ -231,15 +312,53 @@ export default function Worlds() {
       {roundSessions.length === 0 ? (
         <div className="alert alert-info">
           No {ROUND_LABELS[activeRound]} data yet.
-          {activeRound !== 'prelims' && ' Advancement from previous round will populate this tab automatically.'}
+          {activeRound !== 'prelims' && ' Sync prelims sessions first — advancement will populate this tab automatically once scores post.'}
         </div>
       ) : (
         <>
+          {/* Class tabs */}
+          <div className="tab-list" style={{ marginBottom: 0 }}>
+            {classes.map(cls => (
+              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`}
+                onClick={() => { setActiveClass(cls); setActiveVenue(null) }}>
+                {cls}
+                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }}>
+                  ({[...new Set(classGuardsRaw.filter(g => (g.Class?.split(' - ')[0] || g.Class) === cls || g.Class === cls).map(g => g.Guard))].length})
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Venue tabs — only for prelims */}
+          {activeRound === 'prelims' && venues.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, padding: '10px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
+              {venues.map(v => {
+                const vSpots = spotsPerVenue[v] || 0
+                const vGuards = classGuardsRaw.filter(g => g.Venue === v)
+                const vScored = vGuards.filter(g => g['Prelims Score'] > 0).length
+                return (
+                  <button key={v} onClick={() => setActiveVenue(v)} style={{
+                    padding: '8px 16px', borderRadius: 8, cursor: 'pointer',
+                    fontFamily: 'Barlow Condensed, sans-serif', fontSize: 13, fontWeight: 600,
+                    border: '1px solid ' + (activeVenue === v ? 'var(--accent)' : 'var(--border)'),
+                    background: activeVenue === v ? 'var(--accent-dim)' : 'var(--bg-card)',
+                    color: activeVenue === v ? 'var(--accent)' : 'var(--text-secondary)',
+                  }}>
+                    📍 {v.split(' ').slice(-2).join(' ')}
+                    <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
+                      {vGuards.length} guards · {vSpots > 0 ? `top ${vSpots} advance` : 'spots TBD'}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
           {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
             <div className="stat-card">
-              <div className="stat-value">{classGuards.length}</div>
-              <div className="stat-label">In Class</div>
+              <div className="stat-value">{displayGuards.length}</div>
+              <div className="stat-label">{activeRound === 'prelims' && activeVenue !== 'all' ? 'At Venue' : 'In Class'}</div>
             </div>
             <div className="stat-card">
               <div className="stat-value">{scored.length}</div>
@@ -250,41 +369,16 @@ export default function Worlds() {
               <div className="stat-label">Advancing</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value">{totalSpots || '—'}</div>
+              <div className="stat-value">{venueSpots || '—'}</div>
               <div className="stat-label">
                 {activeRound === 'prelims' ? 'Semis Spots' : activeRound === 'semis' ? 'Finals Spots' : 'Finalists'}
               </div>
             </div>
           </div>
 
-          {/* Class tabs */}
-          <div className="tab-list">
-            {classes.map(cls => (
-              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`}
-                onClick={() => setActiveClass(cls)}>
-                {cls}
-                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }}>
-                  ({Object.keys(allGuards[cls] || {}).length})
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Session info bar */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, fontSize: 12, color: 'var(--text-muted)' }}>
-            {roundSessions
-              .filter(s => (s.data || []).some(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass))
-              .map(s => (
-                <span key={s.session_id} style={{ background: 'var(--bg-card)', borderRadius: 6, padding: '4px 10px', border: '1px solid var(--border)' }}>
-                  📍 {s.venue} · {s.status === 'live' ? '🟢 Live' : '📋 Roster'}
-                </span>
-              ))
-            }
-          </div>
-
           <DataTable
             columns={columns}
-            data={sortedGuards}
+            data={displayGuards}
             rowClass={row => {
               if (row.Status?.includes('To') || row.Status?.includes('Finalist')) return 'advances'
               if (row.Status?.includes('Eliminated')) return 'below-cut'

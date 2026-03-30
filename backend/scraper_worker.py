@@ -855,24 +855,52 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         print(f"  Roster: {len(combined_data)} guards found")
 
         # --- PASS 2: Spot counts from NEXT round's schedules ---
+        # Count total guards in next-round sessions per class.
+        # For prelims with multiple venues (e.g. SA at Cintas + Truist),
+        # each venue advances the same number = total_semis_spots / num_prelim_venues
         if next_round:
             next_sessions = list(db["worlds_sessions"].find(
                 {"round": next_round, "schedule_url": {"$ne": ""}},
                 {"_id": 0}
             ))
             print(f"  Counting spots from {len(next_sessions)} {next_round} sessions...")
+
+            # Count total spots across all next-round sessions
+            total_next_spots = {}
             for ns in next_sessions:
                 ns_url = ns.get("schedule_url", "")
                 if not ns_url:
                     continue
                 try:
                     if ns_url.lower().endswith('.pdf'):
-                        count_pdf_finals_spots(ns_url, class_spots)
+                        count_pdf_finals_spots(ns_url, total_next_spots)
                     else:
-                        count_html_finals_spots(ns_url, class_spots, page)
+                        count_html_finals_spots(ns_url, total_next_spots, page)
                 except Exception as e:
                     print(f"  ⚠️ Spot count error for {ns.get('name')}: {e}")
-            print(f"  Spots: {class_spots}")
+
+            # Count how many prelim venues exist for each class
+            current_round_sessions = list(db["worlds_sessions"].find(
+                {"round": round_type},
+                {"_id": 0}
+            ))
+            # Build class -> venue count map from all prelim sessions
+            class_venue_counts = {}
+            for cs in current_round_sessions:
+                cs_data = db["worlds_state"].find_one({"session_id": cs["session_id"]}, {"data": 1})
+                if not cs_data:
+                    continue
+                classes_in_session = set()
+                for g in (cs_data.get("data") or []):
+                    classes_in_session.add(g.get("Class", "").split(" - ")[0])
+                for cls in classes_in_session:
+                    class_venue_counts[cls] = class_venue_counts.get(cls, 0) + 1
+
+            # Spots per venue = total_next_spots / num_venues for that class
+            for cls, total in total_next_spots.items():
+                num_venues = class_venue_counts.get(cls, 1)
+                class_spots[cls] = total // num_venues if num_venues > 0 else total
+                print(f"  {cls}: {total} total semis spots / {num_venues} venues = {class_spots[cls]} per venue")
         else:
             print(f"  Finals round — no spot count needed")
 
