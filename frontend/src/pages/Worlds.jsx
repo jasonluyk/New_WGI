@@ -175,47 +175,62 @@ export default function Worlds() {
     }
   }, [activeClass, activeRound, venues.join(',')])
 
-  // Build spots per venue for prelims (from worlds_sessions spots)
+  // Build spots per venue for prelims
   const spotsPerVenue = {}
   if (activeRound === 'prelims') {
     for (const s of roundSessions) {
       if ((s.data || []).some(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)) {
-        const venueSpots = s.spots?.[activeClass] || 0
-        spotsPerVenue[s.venue] = (spotsPerVenue[s.venue] || 0) + venueSpots
+        const vs = s.spots?.[activeClass] || 0
+        spotsPerVenue[s.venue] = (spotsPerVenue[s.venue] || 0) + vs
       }
     }
   }
 
-  // Filter guards by venue tab
-  const venueGuards = activeRound === 'prelims' && activeVenue && activeVenue !== 'all'
-    ? classGuardsRaw.filter(g => g.Venue === activeVenue)
-    : classGuardsRaw
-
-  // Deduplicate for semis/finals (guard may appear in multiple session docs)
-  const deduped = activeRound !== 'prelims'
-    ? Object.values(
-        venueGuards.reduce((acc, g) => {
-          if (!acc[g.Guard] || (g['Prelims Score'] || 0) > (acc[g.Guard]['Prelims Score'] || 0))
-            acc[g.Guard] = g
-          return acc
-        }, {})
-      )
-    : venueGuards
-
-  // Get spots for semis/finals
+  const totalPrelimsSpots = Object.values(spotsPerVenue).reduce((a, b) => a + b, 0)
   const roundSpots = activeRound !== 'prelims'
     ? roundSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
     : 0
 
-  // Assign statuses
+  // For prelims: determine which guards to show based on venue selection
+  // Each venue is completely independent — top N per venue advance regardless of scores elsewhere
+  const isViewingVenue = activeRound === 'prelims' && activeVenue && activeVenue !== 'all'
+  const guardsToShow = isViewingVenue
+    ? classGuardsRaw.filter(g => g.Venue === activeVenue)
+    : classGuardsRaw
+
+  // Deduplicate for semis/finals
+  const deduped = activeRound !== 'prelims'
+    ? Object.values(guardsToShow.reduce((acc, g) => {
+        if (!acc[g.Guard] || (g['Prelims Score'] || 0) > (acc[g.Guard]['Prelims Score'] || 0))
+          acc[g.Guard] = g
+        return acc
+      }, {}))
+    : guardsToShow
+
+  // Assign advancement status
   let displayGuards
   if (activeRound === 'prelims') {
-    const withStatus = assignPrelimsStatus(deduped, spotsPerVenue, advMap)
-    // Show venue filter
-    const venueFiltered = activeVenue && activeVenue !== 'all'
-      ? withStatus.filter(g => g.Venue === activeVenue)
-      : withStatus
-    displayGuards = sortGuards(venueFiltered)
+    // Each venue is independent — only compare guards within the same venue
+    const venueSpotCount = isViewingVenue
+      ? (spotsPerVenue[activeVenue] || 0)
+      : 0
+
+    displayGuards = sortGuards(deduped.map(g => {
+      const cls = g.Class?.split(' - ')[0] || g.Class
+      const knownStatus = getStatus(g.Guard, cls, 'prelims', advMap)
+      if (knownStatus) return { ...g, Status: knownStatus }
+      if (g['Prelims Score'] <= 0) return { ...g, Status: '⏳ Pending' }
+
+      if (isViewingVenue && venueSpotCount > 0) {
+        // Rank within this venue only
+        const venueScored = deduped
+          .filter(x => x['Prelims Score'] > 0)
+          .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
+        const rank = venueScored.findIndex(x => x.Guard === g.Guard) + 1
+        return { ...g, Status: rank <= venueSpotCount ? '✅ To Semis' : '❌ Eliminated' }
+      }
+      return { ...g, Status: '⏳ Pending' }
+    }))
   } else {
     const withStatus = assignRoundStatus(deduped, roundSpots, advMap, activeRound)
     displayGuards = sortGuards(withStatus)
@@ -224,11 +239,9 @@ export default function Worlds() {
   const scored = displayGuards.filter(g => g['Prelims Score'] > 0)
   const advancing = displayGuards.filter(g => g.Status?.includes('To') || g.Status?.includes('Finalist'))
 
-  // Venue spots for header display
-  const totalPrelimsSpots = Object.values(spotsPerVenue).reduce((a, b) => a + b, 0)
   const venueSpots = activeRound !== 'prelims'
     ? roundSpots
-    : (activeVenue && activeVenue !== 'all')
+    : isViewingVenue
       ? spotsPerVenue[activeVenue] || 0
       : totalPrelimsSpots
 
@@ -362,7 +375,7 @@ export default function Worlds() {
             <div className="stat-card">
               <div className="stat-value">{displayGuards.length}</div>
               <div className="stat-label">
-                {activeRound === 'prelims' && activeVenue && activeVenue !== 'all' ? 'At Venue' : 'Total Guards'}
+                {isViewingVenue ? 'At Venue' : 'Total Guards'}
               </div>
             </div>
             <div className="stat-card">
@@ -377,7 +390,7 @@ export default function Worlds() {
               <div className="stat-value" style={{ color: 'var(--accent)' }}>{venueSpots || '—'}</div>
               <div className="stat-label">
                 {activeRound === 'prelims'
-                  ? (activeVenue && activeVenue !== 'all' ? 'Semis Spots (This Venue)' : 'Total Semis Spots')
+                  ? (isViewingVenue ? 'Semis Spots (This Venue)' : 'Total Semis Spots')
                   : activeRound === 'semis' ? 'Finals Spots'
                   : 'Finalists'}
               </div>
