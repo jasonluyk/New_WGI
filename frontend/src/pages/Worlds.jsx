@@ -176,16 +176,23 @@ export default function Worlds() {
   }, [activeClass, activeRound, venues.join(',')])
 
   // Build spots per venue for prelims
+  // spots on session is a dict like {"Scholastic A": 28} or {"Scholastic Open": 36, "Independent Open": 24}
   const spotsPerVenue = {}
+  const advancementTypes = {}
   if (activeRound === 'prelims') {
     for (const s of roundSessions) {
-      if ((s.data || []).some(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)) {
+      const hasClass = (s.data || []).some(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)
+        || (s.classes || []).includes(activeClass)
+      if (hasClass) {
         const vs = s.spots?.[activeClass] || 0
         spotsPerVenue[s.venue] = (spotsPerVenue[s.venue] || 0) + vs
+        advancementTypes[s.venue] = s.advancement_type || 'overall'
       }
     }
   }
 
+  // For SA: advancement is per_venue. For all others: overall across all rounds/venues
+  const isPerVenue = Object.values(advancementTypes).some(t => t === 'per_venue')
   const totalPrelimsSpots = Object.values(spotsPerVenue).reduce((a, b) => a + b, 0)
   const roundSpots = activeRound !== 'prelims'
     ? roundSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
@@ -210,27 +217,45 @@ export default function Worlds() {
   // Assign advancement status
   let displayGuards
   if (activeRound === 'prelims') {
-    // Each venue is independent — only compare guards within the same venue
-    const venueSpotCount = isViewingVenue
-      ? (spotsPerVenue[activeVenue] || 0)
-      : 0
+    if (isPerVenue) {
+      // SA: each venue is independent — top N per venue advance
+      const venueSpotCount = isViewingVenue ? (spotsPerVenue[activeVenue] || 0) : 0
+      displayGuards = sortGuards(deduped.map(g => {
+        const cls = g.Class?.split(' - ')[0] || g.Class
+        const knownStatus = getStatus(g.Guard, cls, 'prelims', advMap)
+        if (knownStatus) return { ...g, Status: knownStatus }
+        if (g['Prelims Score'] <= 0) return { ...g, Status: '⏳ Pending' }
+        if (isViewingVenue && venueSpotCount > 0) {
+          const venueScored = deduped
+            .filter(x => x['Prelims Score'] > 0)
+            .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
+          const rank = venueScored.findIndex(x => x.Guard === g.Guard) + 1
+          return { ...g, Status: rank <= venueSpotCount ? '✅ To Semis' : '❌ Eliminated' }
+        }
+        return { ...g, Status: '⏳ Pending' }
+      }))
+    } else {
+      // Other classes: top N overall across ALL venues combined
+      const totalSpots = totalPrelimsSpots
+      // Get all guards for this class across all sessions (not filtered by venue)
+      const allClassGuards = roundSessions.flatMap(s =>
+        (s.data || [])
+          .filter(g => (g.Class?.split(' - ')[0] || g.Class) === activeClass)
+          .map(g => ({ ...g, Class: activeClass, Venue: s.venue }))
+      )
+      const allScored = allClassGuards
+        .filter(g => g['Prelims Score'] > 0)
+        .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
+      const advSet = new Set(allScored.slice(0, totalSpots).map(g => g.Guard))
 
-    displayGuards = sortGuards(deduped.map(g => {
-      const cls = g.Class?.split(' - ')[0] || g.Class
-      const knownStatus = getStatus(g.Guard, cls, 'prelims', advMap)
-      if (knownStatus) return { ...g, Status: knownStatus }
-      if (g['Prelims Score'] <= 0) return { ...g, Status: '⏳ Pending' }
-
-      if (isViewingVenue && venueSpotCount > 0) {
-        // Rank within this venue only
-        const venueScored = deduped
-          .filter(x => x['Prelims Score'] > 0)
-          .sort((a, b) => b['Prelims Score'] - a['Prelims Score'])
-        const rank = venueScored.findIndex(x => x.Guard === g.Guard) + 1
-        return { ...g, Status: rank <= venueSpotCount ? '✅ To Semis' : '❌ Eliminated' }
-      }
-      return { ...g, Status: '⏳ Pending' }
-    }))
+      displayGuards = sortGuards(deduped.map(g => {
+        const cls = g.Class?.split(' - ')[0] || g.Class
+        const knownStatus = getStatus(g.Guard, cls, 'prelims', advMap)
+        if (knownStatus) return { ...g, Status: knownStatus }
+        if (g['Prelims Score'] <= 0) return { ...g, Status: '⏳ Pending' }
+        return { ...g, Status: advSet.has(g.Guard) ? '✅ To Semis' : '❌ Eliminated' }
+      }))
+    }
   } else {
     const withStatus = assignRoundStatus(deduped, roundSpots, advMap, activeRound)
     displayGuards = sortGuards(withStatus)
@@ -345,8 +370,8 @@ export default function Worlds() {
             ))}
           </div>
 
-          {/* Venue tabs — only for prelims */}
-          {activeRound === 'prelims' && venues.length > 1 && (
+          {/* Venue tabs — only for SA (per_venue advancement) */}
+          {activeRound === 'prelims' && isPerVenue && venues.length > 1 && (
             <div style={{ display: 'flex', gap: 6, padding: '10px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
               {venues.map(v => {
                 const vSpots = spotsPerVenue[v] || 0

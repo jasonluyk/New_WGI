@@ -295,23 +295,13 @@ export default function Admin() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <h3 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 20, fontWeight: 700 }}>5. World Championships</h3>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                className="btn btn-primary"
-                disabled={loading.worldsDiscover}
-                onClick={() => handle('worldsDiscover', async () => {
-                  await fetch('/api/admin/worlds-discover', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
-                  })
-                  setTimeout(fetchWorlds, 3000)
-                })}
-              >
-                {loading.worldsDiscover ? 'Discovering...' : '🌍 Auto-Discover Sessions'}
+              <button className="btn btn-secondary" onClick={() => setWorldsExpanded(e => !e)}>
+                {worldsExpanded ? '▲ Collapse' : '▼ Session Status'}
               </button>
               <button
                 className="btn btn-danger"
                 onClick={() => {
-                  if (confirm('Clear all Worlds session data?')) {
+                  if (confirm('Clear all Worlds data and reset?')) {
                     fetch('/api/admin/worlds-clear', {
                       method: 'DELETE',
                       headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
@@ -319,77 +309,82 @@ export default function Admin() {
                   }
                 }}
               >
-                🗑️ Clear Worlds
-              </button>
-              <button className="btn btn-secondary" onClick={() => setWorldsExpanded(e => !e)}>
-                {worldsExpanded ? '▲ Collapse' : '▼ Expand Sessions'}
+                🗑️ Clear
               </button>
             </div>
           </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>
-            Auto-discovers all World Championship sessions. Paste CompSuite URLs and ShowIDs as WGI posts them, then hit Sync per session.
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
+            Automatically sets up all sessions with correct CompSuite URLs and advancement rules, then syncs all prelims rosters at once.
+            On competition day, enter ShowIDs per session as WGI posts scores.
           </p>
 
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <button
+              className="btn btn-primary"
+              disabled={loading.worldsDiscover}
+              onClick={() => handle('worldsDiscover', async () => {
+                await fetch('/api/admin/worlds-discover', {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                })
+                setTimeout(fetchWorlds, 5000)
+              })}
+            >
+              {loading.worldsDiscover ? 'Setting up...' : '🌍 Setup & Sync All Prelims'}
+            </button>
+          </div>
+
           {worldsExpanded && (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 8 }}>
               {worldsSessions.length === 0 ? (
-                <div className="alert alert-info">No sessions yet — click Auto-Discover.</div>
+                <div className="alert alert-info">No sessions yet — click Setup & Sync All Prelims.</div>
               ) : (
                 ['prelims', 'semis', 'finals'].map(round => {
                   const roundSessions = worldsSessions.filter(s => s.round === round)
                   if (!roundSessions.length) return null
                   return (
-                    <div key={round} style={{ marginBottom: 24 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Barlow Condensed, sans-serif', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 10 }}>
-                        {round === 'prelims' ? 'Prelims — Thursday April 9' : round === 'semis' ? 'Semi-Finals — Friday April 10' : 'Finals — Friday/Saturday April 10–11'}
+                    <div key={round} style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, fontFamily: 'Barlow Condensed, sans-serif', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8 }}>
+                        {round === 'prelims' ? '📅 Prelims — Thursday April 9' : round === 'semis' ? '📅 Semi-Finals — Friday April 10' : '📅 Finals — Friday/Saturday April 10–11'}
                       </div>
                       {roundSessions.map(s => (
-                        <div key={s.session_id} style={{ marginBottom: 10, padding: '12px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.venue}</div>
-                              {s.show_id && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>ShowID: {s.show_id}</div>}
-                              <div style={{ fontSize: 11, marginTop: 2, color: s.status === 'live' ? 'var(--green)' : s.status === 'roster_only' ? 'var(--accent)' : 'var(--text-muted)' }}>
-                                {s.status === 'live' ? '🟢 Live' : s.status === 'roster_only' ? '📋 Roster Only' : '⏳ Pending'}
-                              </div>
+                        <div key={s.session_id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', marginBottom: 8, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                              {s.venue}
+                              {s.show_id && <span style={{ color: 'var(--accent)', marginLeft: 8 }}>ShowID: {s.show_id}</span>}
                             </div>
-                            <button
-                              className="btn btn-primary"
-                              style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
-                              disabled={loading[`worlds_${s.session_id}`] || (!worldsUrls[s.session_id] && !s.schedule_url && !worldsShowIds[s.session_id] && !s.show_id)}
-                              onClick={() => handle(`worlds_${s.session_id}`, async () => {
-                                await fetch('/api/admin/worlds-session', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa('admin:' + pass) },
-                                  body: JSON.stringify({
-                                    session_id: s.session_id,
-                                    show_id: worldsShowIds[s.session_id] || s.show_id || '',
-                                    schedule_url: worldsUrls[s.session_id] || s.schedule_url || ''
-                                  })
+                            <div style={{ fontSize: 11, marginTop: 2, color: s.status === 'live' ? 'var(--green)' : s.status === 'roster_only' ? 'var(--accent)' : 'var(--text-muted)' }}>
+                              {s.status === 'live' ? '🟢 Live Scores' : s.status === 'roster_only' ? '📋 Roster Loaded' : '⏳ Pending'}
+                            </div>
+                          </div>
+                          <input
+                            className="input"
+                            placeholder="WGI Show ID"
+                            style={{ width: 140, fontSize: 12 }}
+                            value={worldsShowIds[s.session_id] ?? s.show_id ?? ''}
+                            onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
+                          />
+                          <button
+                            className="btn btn-primary"
+                            style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}
+                            disabled={loading[`worlds_${s.session_id}`]}
+                            onClick={() => handle(`worlds_${s.session_id}`, async () => {
+                              await fetch('/api/admin/worlds-session', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa('admin:' + pass) },
+                                body: JSON.stringify({
+                                  session_id: s.session_id,
+                                  show_id: worldsShowIds[s.session_id] || s.show_id || '',
+                                  schedule_url: s.schedule_url || ''
                                 })
-                                setTimeout(fetchWorlds, 2000)
-                              })}
-                            >
-                              {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
-                            </button>
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                            <input
-                              className="input"
-                              placeholder="Schedule URL (CompSuite or PDF)"
-                              style={{ fontSize: 11 }}
-                              value={worldsUrls[s.session_id] ?? s.schedule_url ?? ''}
-                              onChange={e => setWorldsUrls(u => ({ ...u, [s.session_id]: e.target.value }))}
-                            />
-                            <input
-                              className="input"
-                              placeholder="WGI Show ID (when posted)"
-                              style={{ fontSize: 11 }}
-                              value={worldsShowIds[s.session_id] ?? s.show_id ?? ''}
-                              onChange={e => setWorldsShowIds(ids => ({ ...ids, [s.session_id]: e.target.value }))}
-                            />
-                          </div>
+                              })
+                              setTimeout(fetchWorlds, 2000)
+                            })}
+                          >
+                            {loading[`worlds_${s.session_id}`] ? '...' : '📡 Sync'}
+                          </button>
                         </div>
                       ))}
                     </div>

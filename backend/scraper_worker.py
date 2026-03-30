@@ -712,115 +712,205 @@ def scrape_projection(show_name, prelims_url, finals_url):
 
 def scrape_worlds_schedule():
     """
-    Scrapes the WGI World Championships schedule page to auto-discover
-    all session URLs. Matches CompSuite/PDF links to known sessions by
-    scanning the surrounding text for session name context.
+    Seeds all World Championship sessions with known CompSuite URLs,
+    correct venues, advancement rules, and immediately scrapes all rosters.
+    URLs are hard-coded since the WGI schedule page is JS-rendered.
+    Advancement spots are hard-coded from the official schedule notes.
     """
-    print("🌍 [WORKER] Auto-discovering World Championship sessions...")
-    WORLDS_URL = "https://www.wgi.org/color-guard/world-championships-cg/world-championships-schedules-cg/"
+    print("🌍 [WORKER] Setting up World Championship sessions...")
 
-    # Known sessions with their identifying keywords for URL matching
-    KNOWN_SESSIONS = [
-        {"session_id": "independent_open_prelims_dayton", "name": "Independent Open Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent open", "prelim"]},
-        {"session_id": "scholastic_world_prelims", "name": "Scholastic World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic world", "prelim"]},
-        {"session_id": "independent_world_prelims", "name": "Independent World Prelims", "venue": "University of Dayton Arena", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent world", "prelim"]},
-        {"session_id": "scholastic_open_prelims_nutter", "name": "Scholastic Open Prelims", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic open", "prelim"]},
-        {"session_id": "independent_open_prelims_nutter", "name": "Independent Open Prelims (Nutter)", "venue": "Wright State University Nutter Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent open", "prelim", "nutter"]},
-        {"session_id": "scholastic_a_prelims_cintas", "name": "Scholastic A Prelims (Cintas)", "venue": "Cintas Center at Xavier", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic a", "prelim", "cintas"]},
-        {"session_id": "scholastic_a_prelims_truist", "name": "Scholastic A Prelims (Truist)", "venue": "Truist Arena at Northern Kentucky University", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["scholastic a", "prelim", "truist"]},
-        {"session_id": "independent_a_prelims", "name": "Independent A Prelims", "venue": "Dayton Convention Center", "day": "Thursday April 9, 2026", "round": "prelims", "keywords": ["independent a", "prelim"]},
-        {"session_id": "scholastic_world_semis", "name": "Scholastic World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic world", "semi"]},
-        {"session_id": "independent_world_semis", "name": "Independent World Semi-Finals", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent world", "semi"]},
-        {"session_id": "a_class_finals", "name": "A Class Finals (IA/SA)", "venue": "University of Dayton Arena", "day": "Friday April 10, 2026", "round": "finals", "keywords": ["a class", "final"]},
-        {"session_id": "scholastic_a_semis_nutter", "name": "Scholastic A Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic a", "semi"]},
-        {"session_id": "independent_open_semis", "name": "Independent Open Semi-Finals", "venue": "Wright State University Nutter Center", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent open", "semi"]},
-        {"session_id": "independent_a_semis", "name": "Independent A Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["independent a", "semi"]},
-        {"session_id": "scholastic_open_semis", "name": "Scholastic Open Semi-Finals", "venue": "Truist Arena at Northern Kentucky University", "day": "Friday April 10, 2026", "round": "semis", "keywords": ["scholastic open", "semi"]},
-        {"session_id": "open_class_finals", "name": "Open Class Finals (SO/IO)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "keywords": ["open class", "final"]},
-        {"session_id": "world_class_finals", "name": "World Class Finals (SW/IW)", "venue": "University of Dayton Arena", "day": "Saturday April 11, 2026", "round": "finals", "keywords": ["world class", "final"]},
+    # All known sessions with CompSuite URLs and advancement rules
+    # advancement_type: 'per_venue' (SA) or 'overall' (all others)
+    # semis_spots: total spots to semis per class
+    WORLDS_SESSIONS = [
+        # ── THURSDAY APRIL 9 — PRELIMS ──────────────────────────────────
+        {
+            "session_id": "sa_prelims_cintas",
+            "name": "SA Prelims – Cintas Center",
+            "day": "Thursday April 9, 2026",
+            "venue": "Cintas Center at Xavier",
+            "round": "prelims",
+            "classes": ["Scholastic A"],
+            "schedule_url": "https://schedules.competitionsuite.com/2026-wgi-worlds-sa-cintas_standard.htm",
+            "advancement_type": "per_venue",
+            "semis_spots": 28,
+        },
+        {
+            "session_id": "sa_prelims_truist",
+            "name": "SA Prelims – Truist Arena",
+            "day": "Thursday April 9, 2026",
+            "venue": "Truist Arena at Northern Kentucky University",
+            "round": "prelims",
+            "classes": ["Scholastic A"],
+            "schedule_url": "https://schedules.competitionsuite.com/78616df9-2576-4f64-83f5-ee671f13e51e_standard.htm",
+            "advancement_type": "per_venue",
+            "semis_spots": 28,
+        },
+        {
+            "session_id": "so_io_prelims_nutter_r1r3",
+            "name": "SO / IO Prelims – Nutter Center (Rounds 1 & 3)",
+            "day": "Thursday April 9, 2026",
+            "venue": "Wright State University Nutter Center",
+            "round": "prelims",
+            "classes": ["Scholastic Open", "Independent Open"],
+            "schedule_url": "https://schedules.competitionsuite.com/95995091-fce3-4f45-83eb-c05d6cacb64e_standard.htm",
+            "advancement_type": "overall",
+            "semis_spots": {"Scholastic Open": 36, "Independent Open": 24},
+        },
+        {
+            "session_id": "io_sw_iw_prelims_ud_r2r4",
+            "name": "IO / SW / IW Prelims – UD Arena (Rounds 2 & 4)",
+            "day": "Thursday April 9, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "prelims",
+            "classes": ["Independent Open", "Scholastic World", "Independent World"],
+            "schedule_url": "https://schedules.competitionsuite.com/92bf69ad-cbe3-423f-98d3-7c8d0dc2d8b8_standard.htm",
+            "advancement_type": "overall",
+            "semis_spots": {"Independent Open": 24, "Scholastic World": 20, "Independent World": 24},
+        },
+        {
+            "session_id": "ia_prelims_convention",
+            "name": "IA Prelims – Dayton Convention Center",
+            "day": "Thursday April 9, 2026",
+            "venue": "Dayton Convention Center",
+            "round": "prelims",
+            "classes": ["Independent A"],
+            "schedule_url": "https://schedules.competitionsuite.com/4b722173-fec7-4f30-a7db-c691185d6156_standard.htm",
+            "advancement_type": "overall",
+            "semis_spots": {"Independent A": 36},
+        },
+
+        # ── FRIDAY APRIL 10 — SEMIS & A-CLASS FINALS ────────────────────
+        {
+            "session_id": "sa_semis_nutter",
+            "name": "SA Semi-Finals – Nutter Center",
+            "day": "Friday April 10, 2026",
+            "venue": "Wright State University Nutter Center",
+            "round": "semis",
+            "classes": ["Scholastic A"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "ia_sa_finals_ud",
+            "name": "A Class Finals (IA / SA) – UD Arena",
+            "day": "Friday April 10, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "finals",
+            "classes": ["Independent A", "Scholastic A"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "ia_semis_truist",
+            "name": "IA Semi-Finals – Truist Arena",
+            "day": "Friday April 10, 2026",
+            "venue": "Truist Arena at Northern Kentucky University",
+            "round": "semis",
+            "classes": ["Independent A"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "so_semis_truist",
+            "name": "SO Semi-Finals – Truist Arena",
+            "day": "Friday April 10, 2026",
+            "venue": "Truist Arena at Northern Kentucky University",
+            "round": "semis",
+            "classes": ["Scholastic Open"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "io_semis_nutter",
+            "name": "IO Semi-Finals – Nutter Center",
+            "day": "Friday April 10, 2026",
+            "venue": "Wright State University Nutter Center",
+            "round": "semis",
+            "classes": ["Independent Open"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "sw_semis_ud",
+            "name": "SW Semi-Finals – UD Arena",
+            "day": "Friday April 10, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "semis",
+            "classes": ["Scholastic World"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "iw_semis_ud",
+            "name": "IW Semi-Finals – UD Arena",
+            "day": "Friday April 10, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "semis",
+            "classes": ["Independent World"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+
+        # ── SATURDAY APRIL 11 — FINALS ───────────────────────────────────
+        {
+            "session_id": "so_io_finals_ud",
+            "name": "Open Class Finals (SO / IO) – UD Arena",
+            "day": "Saturday April 11, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "finals",
+            "classes": ["Scholastic Open", "Independent Open"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
+        {
+            "session_id": "sw_iw_finals_ud",
+            "name": "World Class Finals (SW / IW) – UD Arena",
+            "day": "Saturday April 11, 2026",
+            "venue": "University of Dayton Arena",
+            "round": "finals",
+            "classes": ["Scholastic World", "Independent World"],
+            "schedule_url": "",
+            "semis_spots": 0,
+        },
     ]
 
-    # Initialize sessions from known list
-    sessions = [{**s, "schedule_url": "", "show_id": "", "status": "pending"} for s in KNOWN_SESSIONS]
-
-    # Try to scrape the page and match URLs to sessions
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-            context = browser.new_context(user_agent=USER_AGENT)
-            page = context.new_page()
-            page.goto(WORLDS_URL, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(6000)
-            soup = BeautifulSoup(page.content(), 'html.parser')
-            browser.close()
-
-        # Find all schedule links (CompSuite or PDF)
-        schedule_links = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            link_text = a.get_text(strip=True).lower()
-            # Only grab standard schedule links (not logistical)
-            if ('competitionsuite' in href or href.lower().endswith('.pdf') or href.lower().endswith('.htm')) and 'logistical' not in link_text:
-                # Get surrounding context text
-                parent = a.find_parent(['li', 'p', 'div', 'td'])
-                context_text = parent.get_text(strip=True).lower() if parent else ''
-                full_url = href if href.startswith('http') else f"https://www.wgi.org{href}"
-                schedule_links.append({"url": full_url, "link_text": link_text, "context": context_text})
-                print(f"  Found link: {link_text[:50]} -> {full_url[:60]}")
-
-        print(f"  Total schedule links found: {len(schedule_links)}")
-
-        # Match each link to the best known session by keyword overlap
-        used_urls = set()
-        for session in sessions:
-            keywords = session.get("keywords", [])
-            best_match = None
-            best_score = 0
-            for link in schedule_links:
-                if link["url"] in used_urls:
-                    continue
-                combined = link["link_text"] + " " + link["context"]
-                score = sum(1 for kw in keywords if kw in combined)
-                if score > best_score:
-                    best_score = score
-                    best_match = link
-            if best_match and best_score >= 2:
-                session["schedule_url"] = best_match["url"]
-                used_urls.add(best_match["url"])
-                print(f"  ✅ Matched: {session['name']} -> {best_match['url'][:60]}")
-            else:
-                print(f"  ⚠️  No URL match for: {session['name']}")
-
-    except Exception as e:
-        print(f"⚠️ [WORKER] Worlds page scrape error: {e} — using known sessions without URLs")
-
-    # Upsert sessions — preserve existing show_ids and manually entered URLs
-    for s in sessions:
+    # Upsert all sessions — preserve existing show_ids and manually entered URLs
+    for s in WORLDS_SESSIONS:
         existing = db["worlds_sessions"].find_one({"session_id": s["session_id"]})
+        doc = {**s, "show_id": "", "status": "pending"}
         if existing:
-            # Always keep manually set show_id
-            s["show_id"] = existing.get("show_id", "")
-            s["status"] = existing.get("status", "pending")
-            # Only overwrite schedule_url if we found a new one, else keep existing
+            doc["show_id"] = existing.get("show_id", "")
+            doc["status"] = existing.get("status", "pending")
+            # Only preserve manually entered URL if we don't have a hardcoded one
             if not s.get("schedule_url") and existing.get("schedule_url"):
-                s["schedule_url"] = existing.get("schedule_url")
+                doc["schedule_url"] = existing.get("schedule_url")
         db["worlds_sessions"].update_one(
             {"session_id": s["session_id"]},
-            {"$set": s},
+            {"$set": doc},
             upsert=True
         )
-    print(f"✅ [WORKER] {len(sessions)} World Championship sessions ready.")
+
+    print(f"✅ [WORKER] {len(WORLDS_SESSIONS)} sessions ready.")
+
+    # Immediately scrape all prelims sessions that have URLs
+    prelims = [s for s in WORLDS_SESSIONS if s["round"] == "prelims" and s.get("schedule_url")]
+    print(f"🚀 [WORKER] Auto-scraping {len(prelims)} prelims sessions...")
+    for s in prelims:
+        try:
+            scrape_worlds_session(s["session_id"])
+        except Exception as e:
+            print(f"⚠️ Error scraping {s['name']}: {e}")
+
+    print("✅ [WORKER] World Championship setup complete.")
 
 
 def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
     """
     Scrapes a single World Championship session.
-    - Roster + times come from this session's schedule_url
-    - Advancement spots come from the NEXT round's schedule:
-        prelims  -> count guards in semis schedules (same class)
-        semis    -> count guards in finals schedules (same class)
-        finals   -> no spot count needed
-    - Scores come from WGI ShowID if available
+    - Roster + times from schedule_url
+    - Advancement spots come from hardcoded semis_spots on the session doc
+    - Scores from WGI ShowID if available
     """
     session = db["worlds_sessions"].find_one({"session_id": session_id})
     if not session:
@@ -832,79 +922,28 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
     effective_show_id = show_id or session.get("show_id", "")
     round_type = session.get("round", "prelims")
 
-    print(f"🌍 [WORKER] Scraping Worlds session: {session_name} (round={round_type}, show_id={effective_show_id or 'none'})...")
+    # Get advancement spots — can be int (single class) or dict (multiple classes)
+    semis_spots = session.get("semis_spots", 0)
+    advancement_type = session.get("advancement_type", "overall")
+
+    print(f"🌍 [WORKER] Scraping: {session_name} (round={round_type}, show_id={effective_show_id or 'none'})...")
 
     combined_data = {}
-    class_spots = {}
-
-    # Determine which round provides the spot counts
-    next_round = {"prelims": "semis", "semis": "finals"}.get(round_type)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
 
-        # --- PASS 1: Roster from THIS session's schedule ---
+        # --- PASS 1: Roster from schedule URL ---
         if schedule_url:
             if schedule_url.lower().endswith('.pdf'):
                 parse_pdf_schedule(schedule_url, combined_data)
             else:
                 parse_html_schedule(schedule_url, combined_data, page)
+            print(f"  Roster: {len(combined_data)} guards")
 
-        print(f"  Roster: {len(combined_data)} guards found")
-
-        # --- PASS 2: Spot counts from NEXT round's schedules ---
-        # Count total guards in next-round sessions per class.
-        # For prelims with multiple venues (e.g. SA at Cintas + Truist),
-        # each venue advances the same number = total_semis_spots / num_prelim_venues
-        if next_round:
-            next_sessions = list(db["worlds_sessions"].find(
-                {"round": next_round, "schedule_url": {"$ne": ""}},
-                {"_id": 0}
-            ))
-            print(f"  Counting spots from {len(next_sessions)} {next_round} sessions...")
-
-            # Count total spots across all next-round sessions
-            total_next_spots = {}
-            for ns in next_sessions:
-                ns_url = ns.get("schedule_url", "")
-                if not ns_url:
-                    continue
-                try:
-                    if ns_url.lower().endswith('.pdf'):
-                        count_pdf_finals_spots(ns_url, total_next_spots)
-                    else:
-                        count_html_finals_spots(ns_url, total_next_spots, page)
-                except Exception as e:
-                    print(f"  ⚠️ Spot count error for {ns.get('name')}: {e}")
-
-            # Count how many prelim venues exist for each class
-            current_round_sessions = list(db["worlds_sessions"].find(
-                {"round": round_type},
-                {"_id": 0}
-            ))
-            # Build class -> venue count map from all prelim sessions
-            class_venue_counts = {}
-            for cs in current_round_sessions:
-                cs_data = db["worlds_state"].find_one({"session_id": cs["session_id"]}, {"data": 1})
-                if not cs_data:
-                    continue
-                classes_in_session = set()
-                for g in (cs_data.get("data") or []):
-                    classes_in_session.add(g.get("Class", "").split(" - ")[0])
-                for cls in classes_in_session:
-                    class_venue_counts[cls] = class_venue_counts.get(cls, 0) + 1
-
-            # Spots per venue = total_next_spots / num_venues for that class
-            for cls, total in total_next_spots.items():
-                num_venues = class_venue_counts.get(cls, 1)
-                class_spots[cls] = total // num_venues if num_venues > 0 else total
-                print(f"  {cls}: {total} total semis spots / {num_venues} venues = {class_spots[cls]} per venue")
-        else:
-            print(f"  Finals round — no spot count needed")
-
-        # --- PASS 3: Scores from WGI ShowID ---
+        # --- PASS 2: Scores from WGI ShowID ---
         if effective_show_id:
             wgi_url = f"https://www.wgi.org/scores/color-guard-score-event/?ShowId={effective_show_id}"
             print(f"  📡 Pulling scores: {wgi_url}")
@@ -947,15 +986,24 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         browser.close()
 
     if not combined_data:
-        print(f"❌ No data found for session: {session_name}")
+        print(f"❌ No data found for: {session_name}")
         return
+
+    # Build spots dict for this session — normalize semis_spots to dict format
+    if isinstance(semis_spots, dict):
+        spots = semis_spots
+    elif isinstance(semis_spots, int) and semis_spots > 0:
+        # Apply to all classes in this session
+        spots = {cls: semis_spots for cls in session.get("classes", [])}
+    else:
+        spots = {}
 
     # Update session doc
     db["worlds_sessions"].update_one(
         {"session_id": session_id},
         {"$set": {
             "show_id": effective_show_id,
-            "spots": class_spots,
+            "spots": spots,
             "status": "live" if effective_show_id else "roster_only"
         }}
     )
@@ -969,13 +1017,16 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
             "round": round_type,
             "day": session.get("day", ""),
             "venue": session.get("venue", ""),
+            "classes": session.get("classes", []),
+            "advancement_type": advancement_type,
             "data": list(combined_data.values()),
-            "spots": class_spots,
+            "spots": spots,
             "status": "live" if effective_show_id else "roster_only"
         }},
         upsert=True
     )
-    print(f"✅ [WORKER] Saved {len(combined_data)} guards for {session_name}.")
+    print(f"✅ Saved {len(combined_data)} guards for {session_name}. Spots: {spots}")
+
 
 # =====================================================================
 # --- THE WORKER BRAIN (Command Listener) ---
