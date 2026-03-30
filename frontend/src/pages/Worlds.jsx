@@ -225,9 +225,12 @@ export default function Worlds() {
   const advancing = displayGuards.filter(g => g.Status?.includes('To') || g.Status?.includes('Finalist'))
 
   // Venue spots for header display
-  const venueSpots = activeRound === 'prelims' && activeVenue && activeVenue !== 'all'
-    ? spotsPerVenue[activeVenue] || 0
-    : roundSpots
+  const totalPrelimsSpots = Object.values(spotsPerVenue).reduce((a, b) => a + b, 0)
+  const venueSpots = activeRound !== 'prelims'
+    ? roundSpots
+    : (activeVenue && activeVenue !== 'all')
+      ? spotsPerVenue[activeVenue] || 0
+      : totalPrelimsSpots
 
   const columns = [
     {
@@ -358,7 +361,9 @@ export default function Worlds() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
             <div className="stat-card">
               <div className="stat-value">{displayGuards.length}</div>
-              <div className="stat-label">{activeRound === 'prelims' && activeVenue !== 'all' ? 'At Venue' : 'In Class'}</div>
+              <div className="stat-label">
+                {activeRound === 'prelims' && activeVenue && activeVenue !== 'all' ? 'At Venue' : 'Total Guards'}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-value">{scored.length}</div>
@@ -369,9 +374,12 @@ export default function Worlds() {
               <div className="stat-label">Advancing</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value">{venueSpots || '—'}</div>
+              <div className="stat-value" style={{ color: 'var(--accent)' }}>{venueSpots || '—'}</div>
               <div className="stat-label">
-                {activeRound === 'prelims' ? 'Semis Spots' : activeRound === 'semis' ? 'Finals Spots' : 'Finalists'}
+                {activeRound === 'prelims'
+                  ? (activeVenue && activeVenue !== 'all' ? 'Semis Spots (This Venue)' : 'Total Semis Spots')
+                  : activeRound === 'semis' ? 'Finals Spots'
+                  : 'Finalists'}
               </div>
             </div>
           </div>
