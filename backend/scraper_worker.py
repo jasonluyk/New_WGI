@@ -731,7 +731,7 @@ def scrape_worlds_schedule():
             "venue": "Cintas Center at Xavier",
             "round": "prelims",
             "classes": ["Scholastic A"],
-            "schedule_url": "https://schedules.competitionsuite.com/2026-wgi-worlds-sa-cintas_standard.htm",
+            "schedule_url": "https://schedules.competitionsuite.com/3c1bed87-02c9-411f-8bc4-e4d995917276_standard.htm",
             "advancement_type": "per_venue",
             "semis_spots": 28,
         },
