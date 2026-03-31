@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getProjection } from '../api/client'
 import DataTable from '../components/DataTable'
-import WorldsProjection from './WorldsProjection'
 
 export default function Projector() {
   const [projData, setProjData] = useState([])
@@ -122,7 +121,14 @@ export default function Projector() {
   if (!showName || projData.length === 0) return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 24px' }}>
       <div className="page-header"><h1 className="page-title">Future Show Projector</h1></div>
-      <div className="alert alert-info">No projection loaded. Use the Admin panel to build a projection for an upcoming show.</div>
+      <div className="alert alert-info" style={{ marginBottom: 48 }}>No projection loaded. Use the Admin panel to build a projection for an upcoming show.</div>
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 36 }}>
+        <div style={{ marginBottom: 24 }}>
+          <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>🏆 Worlds Projection</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Projected advancement for WGI World Championships based on season high scores</p>
+        </div>
+        <WorldsProjection />
+      </div>
     </div>
   )
 
@@ -176,19 +182,6 @@ export default function Projector() {
           return ''
         }}
       />
-
-      {/* World Championships Projection */}
-      <div style={{ marginTop: 56, borderTop: '1px solid var(--border)', paddingTop: 36 }}>
-        <div style={{ marginBottom: 24 }}>
-          <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>
-            🏆 Worlds Projection
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
-            Projected advancement for WGI World Championships based on season high scores
-          </p>
-        </div>
-        <WorldsProjection />
-      </div>
     </div>
   )
 }
