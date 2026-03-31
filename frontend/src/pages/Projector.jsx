@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getProjection } from '../api/client'
 import DataTable from '../components/DataTable'
+import WorldsProjection from './WorldsProjection'
 
 export default function Projector() {
   const [projData, setProjData] = useState([])
@@ -175,6 +176,19 @@ export default function Projector() {
           return ''
         }}
       />
+
+      {/* World Championships Projection */}
+      <div style={{ marginTop: 56, borderTop: '1px solid var(--border)', paddingTop: 36 }}>
+        <div style={{ marginBottom: 24 }}>
+          <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>
+            🏆 Worlds Projection
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
+            Projected advancement for WGI World Championships based on season high scores
+          </p>
+        </div>
+        <WorldsProjection />
+      </div>
     </div>
   )
 }

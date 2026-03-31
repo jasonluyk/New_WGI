@@ -26,6 +26,7 @@ export default function Admin() {
   const [worldsExpanded, setWorldsExpanded] = useState(false)
   const [worldsShowIds, setWorldsShowIds] = useState({})
   const [worldsUrls, setWorldsUrls] = useState({})
+  const [worldsProjStatus, setWorldsProjStatus] = useState('none')
 
   const user = 'admin'
   const pass = sessionStorage.getItem('admin_pass') || password
@@ -318,7 +319,7 @@ export default function Admin() {
             On competition day, enter ShowIDs per session as WGI posts scores.
           </p>
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
             <button
               className="btn btn-primary"
               disabled={loading.worldsDiscover}
@@ -332,6 +333,24 @@ export default function Admin() {
             >
               {loading.worldsDiscover ? 'Setting up...' : '🌍 Setup & Sync All Prelims'}
             </button>
+            <button
+              className="btn btn-secondary"
+              disabled={loading.worldsProj}
+              onClick={() => handle('worldsProj', async () => {
+                await fetch('/api/admin/worlds-projection', {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                })
+                setTimeout(() => {
+                  fetch('/api/worlds/projection').then(r => r.json()).then(res => setWorldsProjStatus(res.status || 'none'))
+                }, 4000)
+              })}
+            >
+              {loading.worldsProj ? 'Building...' : '🔮 Build Worlds Projection'}
+            </button>
+            {worldsProjStatus === 'complete' && (
+              <span className="alert alert-success" style={{ padding: '6px 12px', fontSize: 12 }}>✅ Projection ready</span>
+            )}
           </div>
 
           {worldsExpanded && (

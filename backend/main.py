@@ -393,6 +393,35 @@ def admin_worlds_clear(username: str = Depends(verify_admin)):
     db["worlds_state"].delete_many({})
     return {"message": "Worlds data cleared."}
 
+
+@app.get("/api/worlds/projection")
+def get_worlds_projection():
+    sessions = list(db["worlds_projection"].find({}, {"_id": 0}))
+    status_doc = db["system_state"].find_one({"type": "worlds_projection_status"}, {"_id": 0})
+    return {
+        "data": sessions,
+        "status": status_doc.get("status") if status_doc else "none"
+    }
+
+@app.post("/api/admin/worlds-projection")
+def admin_worlds_projection(username: str = Depends(verify_admin)):
+    db["system_state"].update_one(
+        {"type": "worlds_projection_status"},
+        {"$set": {"status": "loading"}},
+        upsert=True
+    )
+    db["system_state"].insert_one({
+        "type": "scraper_command",
+        "action": "sync_worlds_projection"
+    })
+    return {"message": "Worlds projection command sent."}
+
+@app.delete("/api/admin/worlds-projection")
+def admin_clear_worlds_projection(username: str = Depends(verify_admin)):
+    db["worlds_projection"].delete_many({})
+    db["system_state"].delete_one({"type": "worlds_projection_status"})
+    return {"message": "Worlds projection cleared."}
+
 # =====================================================================
 # HEALTH CHECK
 # =====================================================================

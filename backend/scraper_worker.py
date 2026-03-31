@@ -1028,6 +1028,108 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
     print(f"✅ Saved {len(combined_data)} guards for {session_name}. Spots: {spots}")
 
 
+
+def scrape_worlds_projection():
+    """
+    Builds a projected prelims leaderboard for World Championships.
+    For each guard in the worlds prelims rosters, looks up their
+    season high from wgi_analytics and projects advancement per class.
+    Saves to db["worlds_projection"].
+    """
+    print("🔮 [WORKER] Building Worlds Projection...")
+    from collections import defaultdict
+
+    # Pull all prelims session data
+    prelims_sessions = list(db["worlds_state"].find({"round": "prelims"}, {"_id": 0}))
+    if not prelims_sessions:
+        print("❌ No worlds prelims data found — run Setup & Sync All Prelims first.")
+        db["system_state"].update_one(
+            {"type": "worlds_projection_status"},
+            {"$set": {"status": "failed", "error": "No prelims data. Sync sessions first."}},
+            upsert=True
+        )
+        return
+
+    # Build season high lookup from wgi_analytics
+    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0, "Guard": 1, "Class": 1, "Show": 1, "Score": 1}))
+
+    # Group by (Guard, Class) -> list of scores
+    score_map = defaultdict(list)
+    for row in all_scores:
+        key = (row["Guard"], row["Class"])
+        score_map[key].append(row)
+
+    def get_season_high(guard_name, cls):
+        rows = score_map.get((guard_name, cls), [])
+        if not rows:
+            return None, 0
+        # Same logic as /api/all-guards — prefer finals over prelims per show
+        show_map = defaultdict(dict)
+        for row in rows:
+            show = row.get("Show", "")
+            is_finals = "final" in show.lower()
+            base = show.lower().replace("finals","").replace("final","").strip()
+            if is_finals:
+                show_map[base]["finals"] = row
+            else:
+                show_map[base]["prelims"] = row
+        best_scores = [
+            (entries.get("finals") or entries.get("prelims"))["Score"]
+            for entries in show_map.values()
+        ]
+        return round(max(best_scores), 3), len(show_map)
+
+    # Build projection per session
+    projection_sessions = []
+    for session in prelims_sessions:
+        session_id = session["session_id"]
+        session_name = session["session_name"]
+        venue = session.get("venue", "")
+        advancement_type = session.get("advancement_type", "overall")
+        spots = session.get("spots", {})
+
+        guards = []
+        for g in (session.get("data") or []):
+            guard_name = g["Guard"]
+            cls = g.get("Class", "").split(" - ")[0].strip()
+            season_high, shows = get_season_high(guard_name, cls)
+            guards.append({
+                "Guard": guard_name,
+                "Class": cls,
+                "Venue": venue,
+                "Prelims Time": g.get("Prelims Time", ""),
+                "Season_High": season_high,
+                "Shows": shows,
+                "Has_Data": season_high is not None,
+            })
+
+        projection_sessions.append({
+            "session_id": session_id,
+            "session_name": session_name,
+            "venue": venue,
+            "advancement_type": advancement_type,
+            "spots": spots,
+            "guards": guards,
+        })
+
+    if projection_sessions:
+        db["worlds_projection"].delete_many({})
+        db["worlds_projection"].insert_many(projection_sessions)
+        total = sum(len(s["guards"]) for s in projection_sessions)
+        print(f"✅ [WORKER] Worlds projection complete — {total} guards across {len(projection_sessions)} sessions.")
+        db["system_state"].update_one(
+            {"type": "worlds_projection_status"},
+            {"$set": {"status": "complete"}},
+            upsert=True
+        )
+    else:
+        print("❌ No projection data generated.")
+        db["system_state"].update_one(
+            {"type": "worlds_projection_status"},
+            {"$set": {"status": "failed", "error": "No data."}},
+            upsert=True
+        )
+
 # =====================================================================
 # --- THE WORKER BRAIN (Command Listener) ---
 # =====================================================================
@@ -1091,6 +1193,9 @@ if __name__ == "__main__":
                         show_id=command.get("show_id"),
                         schedule_url_override=command.get("schedule_url")
                     )
+
+                elif action == "sync_worlds_projection":
+                    scrape_worlds_projection()
 
             except Exception as e:
                 print(f"❌ [WORKER] Fatal error executing command '{action}': {e}")
