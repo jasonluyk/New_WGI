@@ -54,13 +54,12 @@ export default function WorldsProjection() {
     if (allClasses.length && !activeClass) setActiveClass(allClasses[0])
   }, [allClasses.join(',')])
 
-  // Sessions with guards for active class
-  const classSessions = sessions.filter(s => s.guards.some(g => g.Class === activeClass))
-  const venues = [...new Set(classSessions.map(s => s.venue))]
+  // Guard against null activeClass before computing anything
+  if (!activeClass) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" /></div>
 
-  useEffect(() => {
-    if (venues.length && !activeVenue) setActiveVenue(venues[0])
-  }, [activeClass, venues.join(',')])
+  // Sessions with guards for active class
+  const classSessions = sessions.filter(s => (s.guards || []).some(g => g.Class === activeClass))
+  const venues = [...new Set(classSessions.map(s => s.venue).filter(Boolean))]
 
   // Determine if this class is per_venue or overall
   const isPerVenue = classSessions.some(s => s.advancement_type === 'per_venue')
@@ -75,8 +74,10 @@ export default function WorldsProjection() {
     (s.guards || []).filter(g => g.Class === activeClass).map(g => ({ ...g, Venue: s.venue }))
   )
 
-  const viewGuards = isPerVenue && activeVenue
-    ? getGuardsForVenue(activeVenue).map(g => ({ ...g, Venue: activeVenue }))
+  const currentVenue = activeVenue || venues[0] || null
+
+  const viewGuards = isPerVenue && currentVenue
+    ? getGuardsForVenue(currentVenue).map(g => ({ ...g, Venue: currentVenue }))
     : allClassGuards
 
   // Get spots
@@ -85,7 +86,7 @@ export default function WorldsProjection() {
     return session?.spots?.[activeClass] || 0
   }
   const totalSpots = isPerVenue
-    ? (getSpots(activeVenue) || 0)
+    ? (getSpots(currentVenue) || 0)
     : classSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
 
   // Sort: has data by score desc, no data at bottom by time
@@ -97,7 +98,7 @@ export default function WorldsProjection() {
   }).map((g, i, arr) => {
     const scoredAbove = arr.slice(0, i).filter(x => x.Has_Data).length
     const rank = g.Has_Data ? scoredAbove + 1 : null
-    const advances = g.Has_Data && totalSpots > 0 && rank <= totalSpots
+    const advances = g.Has_Data && totalSpots > 0 && rank !== null && rank <= totalSpots
     return { ...g, Rank: rank, Advances: advances }
   })
 
@@ -123,9 +124,9 @@ export default function WorldsProjection() {
             <button key={v} onClick={() => setActiveVenue(v)} style={{
               padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
               fontFamily: 'Barlow Condensed, sans-serif', fontSize: 13, fontWeight: 600,
-              border: '1px solid ' + (activeVenue === v ? 'var(--accent)' : 'var(--border)'),
-              background: activeVenue === v ? 'var(--accent-dim)' : 'var(--bg-card)',
-              color: activeVenue === v ? 'var(--accent)' : 'var(--text-secondary)',
+              border: '1px solid ' + (currentVenue === v ? 'var(--accent)' : 'var(--border)'),
+              background: currentVenue === v ? 'var(--accent-dim)' : 'var(--bg-card)',
+              color: currentVenue === v ? 'var(--accent)' : 'var(--text-secondary)',
             }}>
               📍 {v.split(' ').slice(-2).join(' ')}
               <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>top {getSpots(v)} advance</span>
