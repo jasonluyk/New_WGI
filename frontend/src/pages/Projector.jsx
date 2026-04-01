@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { getProjection } from '../api/client'
 import DataTable from '../components/DataTable'
-import WorldsProjection from './WorldsProjection'
+const WorldsProjection = lazy(() => import('./WorldsProjection'))
 
 export default function Projector() {
   // Regional projection state
@@ -165,14 +165,16 @@ export default function Projector() {
           <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>🏆 Worlds Projection</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Projected advancement for WGI World Championships based on season high scores</p>
         </div>
-        <WorldsProjection
-          sessions={worldsSessions}
-          status={worldsStatus}
-          selectedClass={worldsClass}
-          selectedVenue={worldsVenue}
-          onClassChange={(cls) => { setWorldsClass(cls); setWorldsVenue(null) }}
-          onVenueChange={setWorldsVenue}
-        />
+        <Suspense fallback={<div className="spinner" style={{margin:'20px auto', display:'block'}} />}>
+          <WorldsProjection
+            sessions={worldsSessions}
+            status={worldsStatus}
+            selectedClass={worldsClass}
+            selectedVenue={worldsVenue}
+            onClassChange={(cls) => { setWorldsClass(cls); setWorldsVenue(null) }}
+            onVenueChange={setWorldsVenue}
+          />
+        </Suspense>
       </div>
 
     </div>
