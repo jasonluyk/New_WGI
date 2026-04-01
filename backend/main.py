@@ -422,6 +422,77 @@ def admin_clear_worlds_projection(username: str = Depends(verify_admin)):
     db["system_state"].delete_one({"type": "worlds_projection_status"})
     return {"message": "Worlds projection cleared."}
 
+
+# =====================================================================
+# SEASON STANDINGS (all guards from wgi_analytics)
+# =====================================================================
+@app.get("/api/all-guards")
+def get_all_guards():
+    from collections import defaultdict
+
+    CLASS_ORDER = [
+        "Scholastic A", "Scholastic Open", "Scholastic World",
+        "Independent A", "Independent Open", "Independent World"
+    ]
+
+    all_scores = list(db["wgi_analytics"].find({}, {"_id": 0}))
+
+    guard_map = defaultdict(list)
+    for row in all_scores:
+        key = (row["Guard"], row["Class"])
+        guard_map[key].append(row)
+
+    results = []
+    for (guard, cls), rows in guard_map.items():
+        show_map = defaultdict(dict)
+        for row in rows:
+            show = row.get("Show", "")
+            is_finals = "final" in show.lower()
+            base = show.lower().replace("finals", "").replace("final", "").strip()
+            if is_finals:
+                show_map[base]["finals"] = row
+            else:
+                show_map[base]["prelims"] = row
+
+        all_show_scores = []
+        for base, entries in show_map.items():
+            best = entries.get("finals") or entries.get("prelims")
+            all_show_scores.append({
+                "Show": best["Show"],
+                "Score": best["Score"],
+                "Date": best.get("Date")
+            })
+
+        all_show_scores.sort(key=lambda x: x.get("Date") or x["Show"])
+        season_high = max(s["Score"] for s in all_show_scores)
+        season_avg = round(sum(s["Score"] for s in all_show_scores) / len(all_show_scores), 3)
+        best_show = max(all_show_scores, key=lambda x: x["Score"])
+
+        results.append({
+            "Guard": guard,
+            "Class": cls,
+            "Latest_Score": round(season_high, 3),
+            "Latest_Show": best_show["Show"],
+            "Made_Finals": "final" in best_show["Show"].lower(),
+            "Season_High": round(season_high, 3),
+            "Season_Avg": season_avg,
+            "Shows": len(show_map),
+            "All_Scores": all_show_scores
+        })
+
+    results.sort(key=lambda x: (
+        CLASS_ORDER.index(x["Class"]) if x["Class"] in CLASS_ORDER else 99,
+        -x["Latest_Score"]
+    ))
+
+    class_rank = {}
+    for r in results:
+        c = r["Class"]
+        class_rank[c] = class_rank.get(c, 0) + 1
+        r["Rank"] = class_rank[c]
+
+    return {"data": results}
+
 # =====================================================================
 # HEALTH CHECK
 # =====================================================================
