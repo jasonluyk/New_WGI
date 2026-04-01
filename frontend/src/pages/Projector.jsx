@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getProjection } from '../api/client'
 import DataTable from '../components/DataTable'
+import WorldsProjection from './WorldsProjection'
 
 export default function Projector() {
   const [projData, setProjData] = useState([])
