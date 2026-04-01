@@ -22,6 +22,7 @@ export default function WorldsProjection() {
   const [activeVenue, setActiveVenue] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // ALL hooks must come before any conditional returns
   useEffect(() => {
     fetch('/api/worlds/projection')
       .then(r => r.json())
@@ -33,7 +34,32 @@ export default function WorldsProjection() {
       .catch(() => setLoading(false))
   }, [])
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" /></div>
+  const allClasses = [...new Set(
+    sessions.flatMap(s => (s.guards || []).map(g => g.Class))
+  )].filter(Boolean).sort((a, b) => {
+    const ai = CLASS_ORDER.indexOf(a), bi = CLASS_ORDER.indexOf(b)
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+  })
+
+  useEffect(() => {
+    if (allClasses.length && !activeClass) setActiveClass(allClasses[0])
+  }, [allClasses.join(',')])
+
+  const classSessions = activeClass
+    ? sessions.filter(s => (s.guards || []).some(g => g.Class === activeClass))
+    : []
+  const venues = [...new Set(classSessions.map(s => s.venue).filter(Boolean))]
+
+  useEffect(() => {
+    if (venues.length) setActiveVenue(v => (!v || !venues.includes(v)) ? venues[0] : v)
+  }, [activeClass, venues.join(',')])
+
+  // NOW safe to do conditional returns — all hooks are above
+  if (loading) return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+      <div className="spinner" />
+    </div>
+  )
 
   if (status !== 'complete' || sessions.length === 0) return (
     <div className="alert alert-info">
@@ -41,30 +67,15 @@ export default function WorldsProjection() {
     </div>
   )
 
-  // Gather all classes across all sessions
-  const allClasses = [...new Set(
-    sessions.flatMap(s => s.guards.map(g => g.Class))
-  )].sort((a, b) => {
-    const ai = CLASS_ORDER.indexOf(a), bi = CLASS_ORDER.indexOf(b)
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
-  })
+  if (!activeClass) return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+      <div className="spinner" />
+    </div>
+  )
 
-  // Set default class
-  useEffect(() => {
-    if (allClasses.length && !activeClass) setActiveClass(allClasses[0])
-  }, [allClasses.join(',')])
-
-  // Guard against null activeClass before computing anything
-  if (!activeClass) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" /></div>
-
-  // Sessions with guards for active class
-  const classSessions = sessions.filter(s => (s.guards || []).some(g => g.Class === activeClass))
-  const venues = [...new Set(classSessions.map(s => s.venue).filter(Boolean))]
-
-  // Determine if this class is per_venue or overall
   const isPerVenue = classSessions.some(s => s.advancement_type === 'per_venue')
+  const currentVenue = activeVenue || venues[0] || null
 
-  // Get guards for current view
   const getGuardsForVenue = (venue) => {
     const session = classSessions.find(s => s.venue === venue)
     return (session?.guards || []).filter(g => g.Class === activeClass)
@@ -74,22 +85,19 @@ export default function WorldsProjection() {
     (s.guards || []).filter(g => g.Class === activeClass).map(g => ({ ...g, Venue: s.venue }))
   )
 
-  const currentVenue = activeVenue || venues[0] || null
-
   const viewGuards = isPerVenue && currentVenue
     ? getGuardsForVenue(currentVenue).map(g => ({ ...g, Venue: currentVenue }))
     : allClassGuards
 
-  // Get spots
   const getSpots = (venue) => {
     const session = classSessions.find(s => s.venue === venue)
     return session?.spots?.[activeClass] || 0
   }
+
   const totalSpots = isPerVenue
     ? (getSpots(currentVenue) || 0)
     : classSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
 
-  // Sort: has data by score desc, no data at bottom by time
   const sorted = [...viewGuards].sort((a, b) => {
     if (a.Has_Data && b.Has_Data) return (b.Season_High || 0) - (a.Season_High || 0)
     if (a.Has_Data) return -1
@@ -117,7 +125,7 @@ export default function WorldsProjection() {
         ))}
       </div>
 
-      {/* Venue tabs for SA */}
+      {/* Venue tabs — SA only */}
       {isPerVenue && venues.length > 1 && (
         <div style={{ display: 'flex', gap: 6, padding: '10px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
           {venues.map(v => (
@@ -136,7 +144,7 @@ export default function WorldsProjection() {
       )}
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20, marginTop: 16 }}>
         <div className="stat-card">
           <div className="stat-value">{viewGuards.length}</div>
           <div className="stat-label">Guards</div>
@@ -157,7 +165,7 @@ export default function WorldsProjection() {
 
       {totalSpots > 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          🟢 Green = projected to advance · Ranked by season high score · Guards with no season data shown at bottom
+          🟢 Green = projected to advance · Ranked by season high · Guards with no season data shown at bottom
         </p>
       )}
 
@@ -168,35 +176,32 @@ export default function WorldsProjection() {
             <th style={{ width: 50 }}>#</th>
             <th>Guard</th>
             {!isPerVenue && <th style={{ width: 180 }}>Venue</th>}
-            <th style={{ width: 100 }}>Season High</th>
+            <th style={{ width: 110 }}>Season High</th>
             <th style={{ width: 60 }}>Shows</th>
-            <th style={{ width: 140 }}>Status</th>
+            <th style={{ width: 150 }}>Status</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((g, i) => {
-            const isAdv = g.Advances
-            return (
-              <tr key={i} className={isAdv ? 'advances' : g.Has_Data ? '' : 'no-data'}>
-                <td style={{ color: 'var(--text-muted)' }}>{g.Rank ?? '—'}</td>
-                <td style={{ fontWeight: 600 }}>{g.Guard}</td>
-                {!isPerVenue && <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{g.Venue?.split(' ').slice(-2).join(' ')}</td>}
-                <td>
-                  {g.Has_Data
-                    ? <strong style={{ color: 'var(--accent)' }}>{g.Season_High.toFixed(3)}</strong>
-                    : <span style={{ color: 'var(--text-muted)' }}>No Data</span>}
-                </td>
-                <td style={{ color: 'var(--text-muted)' }}>{g.Shows || '—'}</td>
-                <td>
-                  {!g.Has_Data
-                    ? <span className="badge badge-gray">No Season Data</span>
-                    : isAdv
-                      ? <span className="badge badge-green">Proj. Advances</span>
-                      : <span className="badge badge-red">Proj. Eliminated</span>}
-                </td>
-              </tr>
-            )
-          })}
+          {sorted.map((g, i) => (
+            <tr key={i} className={g.Advances ? 'advances' : g.Has_Data ? 'below-cut' : 'no-data'}>
+              <td style={{ color: 'var(--text-muted)' }}>{g.Rank ?? '—'}</td>
+              <td style={{ fontWeight: 600 }}>{g.Guard}</td>
+              {!isPerVenue && <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{g.Venue?.split(' ').slice(-2).join(' ')}</td>}
+              <td>
+                {g.Has_Data
+                  ? <strong style={{ color: 'var(--accent)' }}>{g.Season_High.toFixed(3)}</strong>
+                  : <span style={{ color: 'var(--text-muted)' }}>No Data</span>}
+              </td>
+              <td style={{ color: 'var(--text-muted)' }}>{g.Shows || '—'}</td>
+              <td>
+                {!g.Has_Data
+                  ? <span className="badge badge-gray">No Season Data</span>
+                  : g.Advances
+                    ? <span className="badge badge-green">Proj. Advances</span>
+                    : <span className="badge badge-red">Proj. Eliminated</span>}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
