@@ -9,7 +9,7 @@ export default function Projector() {
   const [spots, setSpots] = useState({})
   const [showName, setShowName] = useState(null)
   const [status, setStatus] = useState('none')
-  const [activeClass, setActiveClass] = useState(null)
+  const [selectedClass, setSelectedClass] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Worlds projection state
@@ -45,13 +45,12 @@ export default function Projector() {
   }, [])
 
   const classes = [...new Set(projData.map(r => r.Class?.split(' - ')[0]))].filter(Boolean).sort()
-  const classKey = classes.join(',')
-
-  useEffect(() => {
-    if (classes.length && !activeClass) setActiveClass(classes[0])
-  }, [classKey])
-
   const saClasses = classes.filter(c => c.includes('Scholastic A'))
+
+  // Derive activeClass — no useEffect needed
+  const activeClass = (selectedClass && classes.includes(selectedClass))
+    ? selectedClass
+    : classes[0] || null
 
   const DEFAULT_SPOTS = {
     'Scholastic A': 10, 'Scholastic Open': 10, 'Scholastic World': 10,
@@ -143,7 +142,7 @@ export default function Projector() {
           </div>
           <div className="tab-list">
             {allTabs.map(cls => (
-              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`} onClick={() => setActiveClass(cls)}>{cls}</button>
+              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`} onClick={() => setSelectedClass(cls)}>{cls}</button>
             ))}
           </div>
           <DataTable
