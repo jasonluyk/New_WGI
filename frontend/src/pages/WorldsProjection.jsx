@@ -1,4 +1,4 @@
-<<<<<<< HEAD:frontend/src/pages/Worldsprojection.jsx
+HEAD:frontend/src/pages/Worldsprojection.jsx
 // Pure presentational component — NO hooks, accepts props from Projector
 const CLASS_ORDER = [
   'Scholastic A', 'Scholastic Open', 'Scholastic World',
