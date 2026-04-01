@@ -154,7 +154,7 @@ export default function WorldsProjection({ sessions, status, selectedClass, sele
   )
 }
 
-=======
+
 // Pure presentational component — NO hooks, accepts props from Projector
 const CLASS_ORDER = [
   'Scholastic A', 'Scholastic Open', 'Scholastic World',
