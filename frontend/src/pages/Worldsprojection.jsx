@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react'
-
+// Pure presentational component — NO hooks, accepts props from Projector
 const CLASS_ORDER = [
   'Scholastic A', 'Scholastic Open', 'Scholastic World',
   'Independent A', 'Independent Open', 'Independent World'
@@ -15,26 +14,13 @@ function parseTime(timeStr) {
   return h * 60 + min
 }
 
-export default function WorldsProjection() {
-  const [sessions, setSessions] = useState([])
-  const [status, setStatus] = useState('none')
-  const [loading, setLoading] = useState(true)
-  const [selectedClass, setSelectedClass] = useState(null)
-  const [selectedVenue, setSelectedVenue] = useState(null)
+export default function WorldsProjection({ sessions, status, selectedClass, selectedVenue, onClassChange, onVenueChange }) {
+  if (status !== 'complete' || !sessions || sessions.length === 0) return (
+    <div className="alert alert-info">
+      No Worlds projection yet. Use Admin → World Championships → 🔮 Build Worlds Projection.
+    </div>
+  )
 
-  // Only one useEffect — fetch data
-  useEffect(() => {
-    fetch('/api/worlds/projection')
-      .then(r => r.json())
-      .then(res => {
-        setSessions(res.data || [])
-        setStatus(res.status || 'none')
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
-  }, [])
-
-  // All derived values — no hooks, just computation
   const allClasses = [...new Set(
     sessions.flatMap(s => (s.guards || []).map(g => g.Class))
   )].filter(Boolean).sort((a, b) => {
@@ -42,23 +28,17 @@ export default function WorldsProjection() {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
-  // Derive activeClass — use selection if valid, else first available
   const activeClass = (selectedClass && allClasses.includes(selectedClass))
-    ? selectedClass
-    : allClasses[0] || null
+    ? selectedClass : allClasses[0] || null
 
-  const classSessions = activeClass
-    ? sessions.filter(s => (s.guards || []).some(g => g.Class === activeClass))
-    : []
+  if (!activeClass) return null
 
+  const classSessions = sessions.filter(s =>
+    (s.guards || []).some(g => g.Class === activeClass)
+  )
   const venues = [...new Set(classSessions.map(s => s.venue).filter(Boolean))]
-
-  // Derive activeVenue — use selection if valid, else first available
-  const activeVenue = (selectedVenue && venues.includes(selectedVenue))
-    ? selectedVenue
-    : venues[0] || null
-
   const isPerVenue = classSessions.some(s => s.advancement_type === 'per_venue')
+  const activeVenue = (selectedVenue && venues.includes(selectedVenue)) ? selectedVenue : venues[0] || null
 
   const getGuardsForVenue = (venue) => {
     const session = classSessions.find(s => s.venue === venue)
@@ -74,8 +54,8 @@ export default function WorldsProjection() {
     : allClassGuards
 
   const getSpots = (venue) => {
-    const session = classSessions.find(s => s.venue === venue)
-    return session?.spots?.[activeClass] || 0
+    const s = classSessions.find(x => x.venue === venue)
+    return s?.spots?.[activeClass] || 0
   }
 
   const totalSpots = isPerVenue
@@ -95,32 +75,21 @@ export default function WorldsProjection() {
   const withData = sorted.filter(g => g.Has_Data).length
   const projected = sorted.filter(g => g.Advances).length
 
-  // All conditional returns come AFTER all hooks
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" /></div>
-
-  if (status !== 'complete' || sessions.length === 0) return (
-    <div className="alert alert-info">
-      No Worlds projection yet. Use Admin → World Championships → 🔮 Build Worlds Projection.
-    </div>
-  )
-
   return (
     <div>
-      {/* Class tabs */}
       <div className="tab-list" style={{ marginBottom: 0 }}>
         {allClasses.map(cls => (
           <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`}
-            onClick={() => { setSelectedClass(cls); setSelectedVenue(null) }}>
+            onClick={() => onClassChange(cls)}>
             {cls}
           </button>
         ))}
       </div>
 
-      {/* Venue tabs — SA only */}
       {isPerVenue && venues.length > 1 && (
         <div style={{ display: 'flex', gap: 6, padding: '10px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
           {venues.map(v => (
-            <button key={v} onClick={() => setSelectedVenue(v)} style={{
+            <button key={v} onClick={() => onVenueChange(v)} style={{
               padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
               fontFamily: 'Barlow Condensed, sans-serif', fontSize: 13, fontWeight: 600,
               border: '1px solid ' + (activeVenue === v ? 'var(--accent)' : 'var(--border)'),
@@ -134,7 +103,6 @@ export default function WorldsProjection() {
         </div>
       )}
 
-      {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20, marginTop: 16 }}>
         <div className="stat-card"><div className="stat-value">{viewGuards.length}</div><div className="stat-label">Guards</div></div>
         <div className="stat-card"><div className="stat-value">{withData}</div><div className="stat-label">With Season Data</div></div>

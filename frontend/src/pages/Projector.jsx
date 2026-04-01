@@ -4,6 +4,7 @@ import DataTable from '../components/DataTable'
 import WorldsProjection from './WorldsProjection'
 
 export default function Projector() {
+  // Regional projection state
   const [projData, setProjData] = useState([])
   const [spots, setSpots] = useState({})
   const [showName, setShowName] = useState(null)
@@ -11,7 +12,13 @@ export default function Projector() {
   const [activeClass, setActiveClass] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // ALL hooks at top — no early returns before this point
+  // Worlds projection state
+  const [worldsSessions, setWorldsSessions] = useState([])
+  const [worldsStatus, setWorldsStatus] = useState('none')
+  const [worldsClass, setWorldsClass] = useState(null)
+  const [worldsVenue, setWorldsVenue] = useState(null)
+
+  // All hooks at top
   useEffect(() => {
     const fetch_ = () => {
       getProjection().then(res => {
@@ -27,12 +34,22 @@ export default function Projector() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    fetch('/api/worlds/projection')
+      .then(r => r.json())
+      .then(res => {
+        setWorldsSessions(res.data || [])
+        setWorldsStatus(res.status || 'none')
+      })
+      .catch(() => {})
+  }, [])
+
   const classes = [...new Set(projData.map(r => r.Class?.split(' - ')[0]))].filter(Boolean).sort()
   const classKey = classes.join(',')
 
   useEffect(() => {
     if (classes.length && !activeClass) setActiveClass(classes[0])
-  }, [classKey]) // use string key, not array reference
+  }, [classKey])
 
   const saClasses = classes.filter(c => c.includes('Scholastic A'))
 
@@ -85,18 +102,17 @@ export default function Projector() {
     { key: 'Guard', label: 'Guard' },
     { key: 'Class', label: 'Round', width: 160 },
     {
-      key: 'Prelims Score', label: 'Avg Score', width: 120,
+      key: 'Prelims Score', label: 'Highest Score', width: 120,
       render: v => v > 0
         ? <strong style={{ color: 'var(--accent)' }}>{v.toFixed(3)}</strong>
         : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No Data</span>
     },
   ]
 
-  // Single return — no early returns above
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 24px' }}>
 
-      {/* Regional Projector Section */}
+      {/* Regional Projection */}
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h1 className="page-title">Future Show Projector</h1>
@@ -112,37 +128,24 @@ export default function Projector() {
       ) : status === 'loading' ? (
         <div className="alert alert-warning" style={{ gap: 12 }}>
           <div className="spinner" style={{ width: 16, height: 16 }} />
-          Building projection... this may take a minute.
+          Building projection...
         </div>
       ) : status === 'failed' ? (
-        <div className="alert alert-error">Projection failed. Check the Admin panel for details.</div>
+        <div className="alert alert-error">Projection failed. Check the Admin panel.</div>
       ) : !showName || projData.length === 0 ? (
         <div className="alert alert-info">No projection loaded. Use the Admin panel to build a projection for an upcoming show.</div>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
-            <div className="stat-card">
-              <div className="stat-value">{projData.length}</div>
-              <div className="stat-label">Teams Registered</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{projData.filter(r => r['Prelims Score'] > 0).length}</div>
-              <div className="stat-label">Teams With Data</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{classSpots}</div>
-              <div className="stat-label">Finals Spots ({activeClass})</div>
-            </div>
+            <div className="stat-card"><div className="stat-value">{projData.length}</div><div className="stat-label">Teams Registered</div></div>
+            <div className="stat-card"><div className="stat-value">{projData.filter(r => r['Prelims Score'] > 0).length}</div><div className="stat-label">Teams With Data</div></div>
+            <div className="stat-card"><div className="stat-value">{classSpots}</div><div className="stat-label">Finals Spots ({activeClass})</div></div>
           </div>
-
           <div className="tab-list">
             {allTabs.map(cls => (
-              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`} onClick={() => setActiveClass(cls)}>
-                {cls}
-              </button>
+              <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`} onClick={() => setActiveClass(cls)}>{cls}</button>
             ))}
           </div>
-
           <DataTable
             columns={activeClass === '📊 All Scholastic A' ? allSAColumns : columns}
             data={currentData}
@@ -157,17 +160,20 @@ export default function Projector() {
         </>
       )}
 
-      {/* Worlds Projection — always rendered */}
+      {/* Worlds Projection — no hooks, data passed as props */}
       <div style={{ marginTop: 56, borderTop: '1px solid var(--border)', paddingTop: 36 }}>
         <div style={{ marginBottom: 24 }}>
-          <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>
-            🏆 Worlds Projection
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
-            Projected advancement for WGI World Championships based on season high scores
-          </p>
+          <h2 style={{ fontFamily: 'Barlow Condensed, sans-serif', fontSize: 32, fontWeight: 800, margin: 0 }}>🏆 Worlds Projection</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>Projected advancement for WGI World Championships based on season high scores</p>
         </div>
-        <WorldsProjection />
+        <WorldsProjection
+          sessions={worldsSessions}
+          status={worldsStatus}
+          selectedClass={worldsClass}
+          selectedVenue={worldsVenue}
+          onClassChange={(cls) => { setWorldsClass(cls); setWorldsVenue(null) }}
+          onVenueChange={setWorldsVenue}
+        />
       </div>
 
     </div>
