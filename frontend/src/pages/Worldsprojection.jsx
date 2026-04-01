@@ -18,11 +18,11 @@ function parseTime(timeStr) {
 export default function WorldsProjection() {
   const [sessions, setSessions] = useState([])
   const [status, setStatus] = useState('none')
-  const [activeClass, setActiveClass] = useState(null)
-  const [activeVenue, setActiveVenue] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [selectedClass, setSelectedClass] = useState(null)
+  const [selectedVenue, setSelectedVenue] = useState(null)
 
-  // ALL hooks must come before any conditional returns
+  // Only one useEffect — fetch data
   useEffect(() => {
     fetch('/api/worlds/projection')
       .then(r => r.json())
@@ -34,6 +34,7 @@ export default function WorldsProjection() {
       .catch(() => setLoading(false))
   }, [])
 
+  // All derived values — no hooks, just computation
   const allClasses = [...new Set(
     sessions.flatMap(s => (s.guards || []).map(g => g.Class))
   )].filter(Boolean).sort((a, b) => {
@@ -41,40 +42,23 @@ export default function WorldsProjection() {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
-  useEffect(() => {
-    if (allClasses.length && !activeClass) setActiveClass(allClasses[0])
-  }, [allClasses.join(',')])
+  // Derive activeClass — use selection if valid, else first available
+  const activeClass = (selectedClass && allClasses.includes(selectedClass))
+    ? selectedClass
+    : allClasses[0] || null
 
   const classSessions = activeClass
     ? sessions.filter(s => (s.guards || []).some(g => g.Class === activeClass))
     : []
+
   const venues = [...new Set(classSessions.map(s => s.venue).filter(Boolean))]
 
-  useEffect(() => {
-    if (venues.length) setActiveVenue(v => (!v || !venues.includes(v)) ? venues[0] : v)
-  }, [activeClass, venues.join(',')])
-
-  // NOW safe to do conditional returns — all hooks are above
-  if (loading) return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
-      <div className="spinner" />
-    </div>
-  )
-
-  if (status !== 'complete' || sessions.length === 0) return (
-    <div className="alert alert-info">
-      No Worlds projection yet. Use Admin → World Championships → 🔮 Build Worlds Projection.
-    </div>
-  )
-
-  if (!activeClass) return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
-      <div className="spinner" />
-    </div>
-  )
+  // Derive activeVenue — use selection if valid, else first available
+  const activeVenue = (selectedVenue && venues.includes(selectedVenue))
+    ? selectedVenue
+    : venues[0] || null
 
   const isPerVenue = classSessions.some(s => s.advancement_type === 'per_venue')
-  const currentVenue = activeVenue || venues[0] || null
 
   const getGuardsForVenue = (venue) => {
     const session = classSessions.find(s => s.venue === venue)
@@ -85,8 +69,8 @@ export default function WorldsProjection() {
     (s.guards || []).filter(g => g.Class === activeClass).map(g => ({ ...g, Venue: s.venue }))
   )
 
-  const viewGuards = isPerVenue && currentVenue
-    ? getGuardsForVenue(currentVenue).map(g => ({ ...g, Venue: currentVenue }))
+  const viewGuards = isPerVenue && activeVenue
+    ? getGuardsForVenue(activeVenue).map(g => ({ ...g, Venue: activeVenue }))
     : allClassGuards
 
   const getSpots = (venue) => {
@@ -95,7 +79,7 @@ export default function WorldsProjection() {
   }
 
   const totalSpots = isPerVenue
-    ? (getSpots(currentVenue) || 0)
+    ? getSpots(activeVenue)
     : classSessions.reduce((sum, s) => sum + (s.spots?.[activeClass] || 0), 0)
 
   const sorted = [...viewGuards].sort((a, b) => {
@@ -104,14 +88,21 @@ export default function WorldsProjection() {
     if (b.Has_Data) return 1
     return parseTime(a.Prelims_Time) - parseTime(b.Prelims_Time)
   }).map((g, i, arr) => {
-    const scoredAbove = arr.slice(0, i).filter(x => x.Has_Data).length
-    const rank = g.Has_Data ? scoredAbove + 1 : null
-    const advances = g.Has_Data && totalSpots > 0 && rank !== null && rank <= totalSpots
-    return { ...g, Rank: rank, Advances: advances }
+    const rank = g.Has_Data ? arr.slice(0, i).filter(x => x.Has_Data).length + 1 : null
+    return { ...g, Rank: rank, Advances: g.Has_Data && totalSpots > 0 && rank !== null && rank <= totalSpots }
   })
 
   const withData = sorted.filter(g => g.Has_Data).length
   const projected = sorted.filter(g => g.Advances).length
+
+  // All conditional returns come AFTER all hooks
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" /></div>
+
+  if (status !== 'complete' || sessions.length === 0) return (
+    <div className="alert alert-info">
+      No Worlds projection yet. Use Admin → World Championships → 🔮 Build Worlds Projection.
+    </div>
+  )
 
   return (
     <div>
@@ -119,7 +110,7 @@ export default function WorldsProjection() {
       <div className="tab-list" style={{ marginBottom: 0 }}>
         {allClasses.map(cls => (
           <button key={cls} className={`tab ${activeClass === cls ? 'active' : ''}`}
-            onClick={() => { setActiveClass(cls); setActiveVenue(null) }}>
+            onClick={() => { setSelectedClass(cls); setSelectedVenue(null) }}>
             {cls}
           </button>
         ))}
@@ -129,12 +120,12 @@ export default function WorldsProjection() {
       {isPerVenue && venues.length > 1 && (
         <div style={{ display: 'flex', gap: 6, padding: '10px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
           {venues.map(v => (
-            <button key={v} onClick={() => setActiveVenue(v)} style={{
+            <button key={v} onClick={() => setSelectedVenue(v)} style={{
               padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
               fontFamily: 'Barlow Condensed, sans-serif', fontSize: 13, fontWeight: 600,
-              border: '1px solid ' + (currentVenue === v ? 'var(--accent)' : 'var(--border)'),
-              background: currentVenue === v ? 'var(--accent-dim)' : 'var(--bg-card)',
-              color: currentVenue === v ? 'var(--accent)' : 'var(--text-secondary)',
+              border: '1px solid ' + (activeVenue === v ? 'var(--accent)' : 'var(--border)'),
+              background: activeVenue === v ? 'var(--accent-dim)' : 'var(--bg-card)',
+              color: activeVenue === v ? 'var(--accent)' : 'var(--text-secondary)',
             }}>
               📍 {v.split(' ').slice(-2).join(' ')}
               <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>top {getSpots(v)} advance</span>
@@ -145,18 +136,9 @@ export default function WorldsProjection() {
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20, marginTop: 16 }}>
-        <div className="stat-card">
-          <div className="stat-value">{viewGuards.length}</div>
-          <div className="stat-label">Guards</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{withData}</div>
-          <div className="stat-label">With Season Data</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: 'var(--green)' }}>{projected}</div>
-          <div className="stat-label">Proj. Advancing</div>
-        </div>
+        <div className="stat-card"><div className="stat-value">{viewGuards.length}</div><div className="stat-label">Guards</div></div>
+        <div className="stat-card"><div className="stat-value">{withData}</div><div className="stat-label">With Season Data</div></div>
+        <div className="stat-card"><div className="stat-value" style={{ color: 'var(--green)' }}>{projected}</div><div className="stat-label">Proj. Advancing</div></div>
         <div className="stat-card">
           <div className="stat-value" style={{ color: 'var(--accent)' }}>{totalSpots || '—'}</div>
           <div className="stat-label">{isPerVenue ? 'Semis Spots (Venue)' : 'Total Semis Spots'}</div>
@@ -165,11 +147,10 @@ export default function WorldsProjection() {
 
       {totalSpots > 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          🟢 Green = projected to advance · Ranked by season high · Guards with no season data shown at bottom
+          🟢 Green = projected to advance · Ranked by season high · No season data shown at bottom
         </p>
       )}
 
-      {/* Table */}
       <table className="data-table">
         <thead>
           <tr>
@@ -187,11 +168,7 @@ export default function WorldsProjection() {
               <td style={{ color: 'var(--text-muted)' }}>{g.Rank ?? '—'}</td>
               <td style={{ fontWeight: 600 }}>{g.Guard}</td>
               {!isPerVenue && <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{g.Venue?.split(' ').slice(-2).join(' ')}</td>}
-              <td>
-                {g.Has_Data
-                  ? <strong style={{ color: 'var(--accent)' }}>{g.Season_High.toFixed(3)}</strong>
-                  : <span style={{ color: 'var(--text-muted)' }}>No Data</span>}
-              </td>
+              <td>{g.Has_Data ? <strong style={{ color: 'var(--accent)' }}>{g.Season_High.toFixed(3)}</strong> : <span style={{ color: 'var(--text-muted)' }}>No Data</span>}</td>
               <td style={{ color: 'var(--text-muted)' }}>{g.Shows || '—'}</td>
               <td>
                 {!g.Has_Data
