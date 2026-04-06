@@ -334,6 +334,19 @@ export default function Admin() {
               {loading.worldsDiscover ? 'Setting up...' : '🌍 Setup & Sync All Prelims'}
             </button>
             <button
+              className="btn btn-primary"
+              disabled={loading.worldsScores}
+              onClick={() => handle('worldsScores', async () => {
+                await fetch('/api/admin/worlds-sync-scores', {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                })
+                setTimeout(fetchWorlds, 4000)
+              })}
+            >
+              {loading.worldsScores ? 'Syncing...' : '📡 Sync All Scores'}
+            </button>
+            <button
               className="btn btn-secondary"
               disabled={loading.worldsProj}
               onClick={() => handle('worldsProj', async () => {

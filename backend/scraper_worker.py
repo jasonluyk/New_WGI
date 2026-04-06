@@ -935,13 +935,20 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
 
-        # --- PASS 1: Roster from schedule URL ---
-        if schedule_url:
+        # --- PASS 1: Roster — load from existing worlds_state first, then re-scrape if URL available ---
+        existing_state = db["worlds_state"].find_one({"session_id": session_id})
+        if existing_state and existing_state.get("data"):
+            for g in existing_state["data"]:
+                combined_data[g["Guard"]] = g.copy()
+            print(f"  Roster loaded from DB: {len(combined_data)} guards")
+
+        if schedule_url and not combined_data:
+            # Only re-scrape schedule if we have no existing data
             if schedule_url.lower().endswith('.pdf'):
                 parse_pdf_schedule(schedule_url, combined_data)
             else:
                 parse_html_schedule(schedule_url, combined_data, page)
-            print(f"  Roster: {len(combined_data)} guards")
+            print(f"  Roster scraped from URL: {len(combined_data)} guards")
 
         # --- PASS 2: Scores from WGI ShowID ---
         if effective_show_id:
@@ -1130,6 +1137,33 @@ def scrape_worlds_projection():
             upsert=True
         )
 
+
+def sync_worlds_scores():
+    """
+    Loops through all worlds sessions that have a ShowID and pulls
+    latest scores from WGI. Called on demand from Admin.
+    """
+    print("📡 [WORKER] Syncing all Worlds scores...")
+    sessions_with_ids = list(db["worlds_sessions"].find(
+        {"show_id": {"$nin": ["", None]}},
+        {"_id": 0}
+    ))
+    if not sessions_with_ids:
+        print("⚠️ No worlds sessions have ShowIDs yet.")
+        return
+
+    print(f"  Found {len(sessions_with_ids)} sessions with ShowIDs.")
+    for session in sessions_with_ids:
+        try:
+            scrape_worlds_session(
+                session["session_id"],
+                show_id=session["show_id"]
+            )
+        except Exception as e:
+            print(f"  ⚠️ Error syncing {session['name']}: {e}")
+
+    print("✅ [WORKER] Worlds scores sync complete.")
+
 # =====================================================================
 # --- THE WORKER BRAIN (Command Listener) ---
 # =====================================================================
@@ -1196,6 +1230,9 @@ if __name__ == "__main__":
 
                 elif action == "sync_worlds_projection":
                     scrape_worlds_projection()
+
+                elif action == "sync_worlds_scores":
+                    sync_worlds_scores()
 
             except Exception as e:
                 print(f"❌ [WORKER] Fatal error executing command '{action}': {e}")
