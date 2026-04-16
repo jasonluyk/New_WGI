@@ -935,20 +935,13 @@ def scrape_worlds_session(session_id, show_id=None, schedule_url_override=None):
         context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
 
-        # --- PASS 1: Roster — load from existing worlds_state first, then re-scrape if URL available ---
-        existing_state = db["worlds_state"].find_one({"session_id": session_id})
-        if existing_state and existing_state.get("data"):
-            for g in existing_state["data"]:
-                combined_data[g["Guard"]] = g.copy()
-            print(f"  Roster loaded from DB: {len(combined_data)} guards")
-
-        if schedule_url and not combined_data:
-            # Only re-scrape schedule if we have no existing data
+        # --- PASS 1: Roster from schedule URL ---
+        if schedule_url:
             if schedule_url.lower().endswith('.pdf'):
                 parse_pdf_schedule(schedule_url, combined_data)
             else:
                 parse_html_schedule(schedule_url, combined_data, page)
-            print(f"  Roster scraped from URL: {len(combined_data)} guards")
+            print(f"  Roster: {len(combined_data)} guards")
 
         # --- PASS 2: Scores from WGI ShowID ---
         if effective_show_id:
@@ -1138,31 +1131,150 @@ def scrape_worlds_projection():
         )
 
 
-def sync_worlds_scores():
+# =====================================================================
+# --- SMART ROUND POLLING ENGINE ---
+# =====================================================================
+
+def parse_time_to_today(time_str):
+    """Convert a time string like '9:30 AM' to a datetime object for today."""
+    from datetime import datetime
+    if not time_str or time_str in ('✅', 'Finished', ''):
+        return None
+    try:
+        now = datetime.now()
+        t = datetime.strptime(time_str.strip(), '%I:%M %p')
+        return now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+    except Exception:
+        return None
+
+
+def get_round_start_times(guards):
     """
-    Loops through all worlds sessions that have a ShowID and pulls
-    latest scores from WGI. Called on demand from Admin.
+    Given a list of guard dicts with 'Prelims Time' and 'Class',
+    returns a sorted list of (round_label, start_datetime) tuples
+    representing when each round begins.
     """
-    print("📡 [WORKER] Syncing all Worlds scores...")
-    sessions_with_ids = list(db["worlds_sessions"].find(
-        {"show_id": {"$nin": ["", None]}},
-        {"_id": 0}
-    ))
-    if not sessions_with_ids:
-        print("⚠️ No worlds sessions have ShowIDs yet.")
+    from datetime import datetime
+    import re
+
+    round_times = {}  # round_label -> earliest time
+    for g in guards:
+        t = parse_time_to_today(g.get('Prelims Time', ''))
+        if not t:
+            continue
+        cls = g.get('Class', '')
+        # Extract round number if present, otherwise use class as label
+        m = re.search(r'Round\s*(\d+)', cls, re.IGNORECASE)
+        label = f"Round {m.group(1)}" if m else cls.split(' - ')[0]
+        if label not in round_times or t < round_times[label]:
+            round_times[label] = t
+
+    return sorted(round_times.items(), key=lambda x: x[1])
+
+
+def poll_round_for_scores(show_name, show_id, round_label, is_worlds=False, session_id=None):
+    """
+    Polls WGI every 2 minutes until at least 1 score appears for the given show.
+    Runs in a background daemon thread.
+    """
+    from datetime import datetime
+    print(f"🔄 [POLLER] Starting score poll for {show_name} — {round_label}")
+
+    max_attempts = 30  # 30 x 2min = 1 hour max
+    for attempt in range(max_attempts):
+        try:
+            wgi_url = f"https://www.wgi.org/scores/color-guard-score-event/?ShowId={show_id}"
+            import requests
+            from bs4 import BeautifulSoup as BS
+            headers = {"User-Agent": USER_AGENT}
+            resp = requests.get(wgi_url, headers=headers, timeout=20)
+            soup = BS(resp.text, 'html.parser')
+
+            # Look for any numeric score in tables
+            scores_found = False
+            for table in soup.find_all('table'):
+                for row in table.find_all('tr'):
+                    cols = row.find_all('td')
+                    if len(cols) >= 3:
+                        score_text = cols[2].get_text(strip=True).upper().replace('VIEW RECAP', '').strip()
+                        try:
+                            float(score_text)
+                            scores_found = True
+                            break
+                        except ValueError:
+                            continue
+                if scores_found:
+                    break
+
+            if scores_found:
+                print(f"✅ [POLLER] Scores detected for {show_name} — {round_label}! Triggering sync...")
+                if is_worlds and session_id:
+                    scrape_worlds_session(session_id, show_id=show_id)
+                else:
+                    active = db["system_state"].find_one({"type": "active_show_name"})
+                    if active:
+                        scrape_live_show(
+                            active.get("name"),
+                            active.get("p_url"),
+                            active.get("f_url"),
+                            show_id=show_id
+                        )
+                print(f"🏁 [POLLER] Done polling for {round_label}")
+                return
+
+        except Exception as e:
+            print(f"⚠️ [POLLER] Poll attempt {attempt+1} error: {e}")
+
+        time.sleep(120)  # 2 minutes between polls
+
+    print(f"⏰ [POLLER] Gave up polling for {round_label} after 1 hour")
+
+
+def schedule_round_polling(show_name, show_id, guards, is_worlds=False, session_id=None):
+    """
+    Starts a background scheduler thread that launches a poll thread
+    at the start time of each round.
+    """
+    from datetime import datetime
+
+    round_times = get_round_start_times(guards)
+    if not round_times:
+        print(f"⚠️ [SCHEDULER] No round times found for {show_name}")
         return
 
-    print(f"  Found {len(sessions_with_ids)} sessions with ShowIDs.")
-    for session in sessions_with_ids:
-        try:
-            scrape_worlds_session(
-                session["session_id"],
-                show_id=session["show_id"]
-            )
-        except Exception as e:
-            print(f"  ⚠️ Error syncing {session['name']}: {e}")
+    print(f"📅 [SCHEDULER] Scheduling polls for {show_name}:")
+    for label, t in round_times:
+        print(f"   {label} → starts at {t.strftime('%I:%M %p')}")
 
-    print("✅ [WORKER] Worlds scores sync complete.")
+    def scheduler_loop():
+        from datetime import datetime
+        triggered = set()
+        while True:
+            now = datetime.now()
+            for label, start_time in round_times:
+                if label in triggered:
+                    continue
+                # Trigger when we reach or pass the round start time
+                if now >= start_time:
+                    triggered.add(label)
+                    print(f"🚀 [SCHEDULER] Starting poll for {show_name} — {label}")
+                    t = threading.Thread(
+                        target=poll_round_for_scores,
+                        args=(show_name, show_id, label, is_worlds, session_id),
+                        daemon=True
+                    )
+                    t.start()
+
+            # All rounds triggered — exit scheduler
+            if len(triggered) >= len(round_times):
+                print(f"✅ [SCHEDULER] All rounds scheduled for {show_name}")
+                return
+
+            time.sleep(30)  # Check every 30 seconds
+
+    t = threading.Thread(target=scheduler_loop, daemon=True)
+    t.start()
+    print(f"📅 [SCHEDULER] Scheduler started for {show_name}")
 
 # =====================================================================
 # --- THE WORKER BRAIN (Command Listener) ---
@@ -1196,11 +1308,18 @@ if __name__ == "__main__":
                     scrape_live_show(show_name, prelims_url, finals_url, show_id=show_id)
                     last_live_sync = time.time()
 
-                    # If no ShowID yet, start background polling thread
+                    # Get the roster we just scraped to extract round times
+                    live_doc = db["live_state"].find_one({"type": "current_session"})
+                    guards = live_doc.get("data", []) if live_doc else []
+
                     if not show_id:
+                        # No ShowID yet — poll for it first, then scheduler will start after discovery
                         t = threading.Thread(target=poll_for_show_id, args=(show_name,), daemon=True)
                         t.start()
                         print(f"🔄 Background polling started for ShowID: {show_name}")
+                    elif guards:
+                        # ShowID known — start round-based score scheduler immediately
+                        schedule_round_polling(show_name, show_id, guards)
 
                 elif action == "sync_archive":
                     scrape_archive(
@@ -1222,17 +1341,24 @@ if __name__ == "__main__":
                     scrape_worlds_schedule()
 
                 elif action == "sync_worlds_session":
+                    sid = command.get("session_id")
+                    w_show_id = command.get("show_id") or ""
                     scrape_worlds_session(
-                        command.get("session_id"),
-                        show_id=command.get("show_id"),
+                        sid,
+                        show_id=w_show_id,
                         schedule_url_override=command.get("schedule_url")
                     )
+                    # If ShowID provided, start round scheduler for this session
+                    if w_show_id:
+                        w_state = db["worlds_state"].find_one({"session_id": sid})
+                        w_guards = w_state.get("data", []) if w_state else []
+                        w_session = db["worlds_sessions"].find_one({"session_id": sid})
+                        w_name = w_session.get("name", sid) if w_session else sid
+                        if w_guards:
+                            schedule_round_polling(w_name, w_show_id, w_guards, is_worlds=True, session_id=sid)
 
                 elif action == "sync_worlds_projection":
                     scrape_worlds_projection()
-
-                elif action == "sync_worlds_scores":
-                    sync_worlds_scores()
 
             except Exception as e:
                 print(f"❌ [WORKER] Fatal error executing command '{action}': {e}")
