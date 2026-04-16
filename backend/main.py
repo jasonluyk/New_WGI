@@ -423,14 +423,14 @@ def admin_clear_worlds_projection(username: str = Depends(verify_admin)):
     return {"message": "Worlds projection cleared."}
 
 
-@app.post("/api/admin/worlds-sync-scores")
-def admin_worlds_sync_scores(username: str = Depends(verify_admin)):
-    """Triggers a score sync for all worlds sessions that have a ShowID."""
+@app.post("/api/admin/worlds-poll-showids")
+def admin_worlds_poll_showids(username: str = Depends(verify_admin)):
+    """Triggers background polling to find ShowIDs for all worlds sessions."""
     db["system_state"].insert_one({
         "type": "scraper_command",
-        "action": "sync_worlds_scores"
+        "action": "sync_worlds_show_ids"
     })
-    return {"message": "Worlds score sync command sent."}
+    return {"message": "Worlds ShowID polling started."}
 
 # =====================================================================
 # HEALTH CHECK

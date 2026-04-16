@@ -348,6 +348,19 @@ export default function Admin() {
             </button>
             <button
               className="btn btn-secondary"
+              disabled={loading.worldsPollIds}
+              onClick={() => handle('worldsPollIds', async () => {
+                await fetch('/api/admin/worlds-poll-showids', {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Basic ' + btoa('admin:' + pass) }
+                })
+                setTimeout(fetchWorlds, 8000)
+              })}
+            >
+              {loading.worldsPollIds ? 'Polling...' : '🔍 Auto-Find ShowIDs'}
+            </button>
+            <button
+              className="btn btn-secondary"
               disabled={loading.worldsProj}
               onClick={() => handle('worldsProj', async () => {
                 await fetch('/api/admin/worlds-projection', {
