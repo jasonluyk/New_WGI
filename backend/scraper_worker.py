@@ -1279,34 +1279,44 @@ def schedule_round_polling(show_name, show_id, guards, is_worlds=False, session_
 
 def poll_worlds_show_ids():
     """
-    Scrapes the WGI scores page to find ShowIDs for all worlds sessions
-    that don't have one yet. Matches by class keywords in the show name.
+    Scrapes the WGI scores page and matches Worlds sessions to ShowIDs
+    using an exact name mapping based on known WGI show name patterns.
     Runs in a background daemon thread, polls every 5 minutes until all found.
     """
     print("🔍 [WORKER] Starting Worlds ShowID polling...")
 
-    # Keyword mapping: class name fragments -> session_id patterns
-    CLASS_KEYWORDS = {
-        "scholastic a": ["sa_prelims", "sa_semis", "ia_sa_finals", "a_class_finals"],
-        "independent a": ["ia_prelims", "ia_semis", "ia_sa_finals", "a_class_finals"],
-        "scholastic open": ["so_io_prelims", "scholastic_open", "so_semis", "open_class_finals", "so_io_finals"],
-        "independent open": ["so_io_prelims", "io_sw_iw_prelims", "io_semis", "open_class_finals", "so_io_finals"],
-        "scholastic world": ["io_sw_iw_prelims", "sw_semis", "sw_iw_finals", "world_class_finals"],
-        "independent world": ["io_sw_iw_prelims", "iw_semis", "sw_iw_finals", "world_class_finals"],
+    # Exact WGI show name fragments -> session_id(s) they map to
+    # Based on actual WGI names: '2026 SA Prelims - Cintas Center', etc.
+    WGI_NAME_TO_SESSION = {
+        "2026 sa prelims - cintas":     ["sa_prelims_cintas"],
+        "2026 sa prelims - truist":     ["sa_prelims_truist"],
+        "2026 io prelims - ud arena":   ["io_sw_iw_prelims_ud_r2r4"],
+        "2026 io prelims - nutter":     ["so_io_prelims_nutter_r1r3"],
+        "2026 iw prelims":              ["io_sw_iw_prelims_ud_r2r4"],
+        "2026 sw prelims":              ["io_sw_iw_prelims_ud_r2r4"],
+        "2026 so prelims":              ["so_io_prelims_nutter_r1r3"],
+        "2026 ia prelims":              ["ia_prelims_convention"],
+        "2026 ia & so semi":            ["ia_semis_truist", "so_semis_truist"],
+        "2026 sa & io semi":            ["sa_semis_nutter", "io_semis_nutter"],
+        "2026 sw & iw semi":            ["sw_semis_ud", "iw_semis_ud"],
+        "2026 cg a class finals":       ["ia_sa_finals_ud"],
+        "2026 cg open class finals":    ["so_io_finals_ud"],
+        "2026 cg world class finals":   ["sw_iw_finals_ud"],
     }
 
     while True:
         # Check which sessions still need ShowIDs
-        pending = list(db["worlds_sessions"].find(
-            {"show_id": {"$in": ["", None]}},
-            {"_id": 0, "session_id": 1, "name": 1, "classes": 1}
-        ))
+        pending_ids = set(
+            s["session_id"] for s in db["worlds_sessions"].find(
+                {"show_id": {"$in": ["", None]}}, {"_id": 0, "session_id": 1}
+            )
+        )
 
-        if not pending:
+        if not pending_ids:
             print("✅ [WORKER] All worlds sessions have ShowIDs.")
             return
 
-        print(f"  {len(pending)} sessions still need ShowIDs...")
+        print(f"  {len(pending_ids)} sessions still need ShowIDs...")
 
         try:
             with sync_playwright() as p:
@@ -1318,8 +1328,8 @@ def poll_worlds_show_ids():
                 soup = BeautifulSoup(page.content(), 'html.parser')
                 browser.close()
 
-            # Extract all ShowId links and their show names
-            show_id_map = {}  # show_name_lower -> show_id
+            # Build show_name -> show_id map from WGI page
+            show_id_map = {}
             for link in soup.find_all('a', href=True):
                 href = link['href']
                 if 'ShowId=' not in href:
@@ -1333,58 +1343,49 @@ def poll_worlds_show_ids():
                             show_name = cols[0].get_text(strip=True)
                 if show_name:
                     extracted_id = href.split("ShowId=")[-1].strip()
-                    show_id_map[show_name.lower()] = extracted_id
+                    show_id_map[show_name.lower().strip()] = extracted_id
 
             print(f"  Found {len(show_id_map)} shows on WGI scores page")
 
-            # Match each pending session to a ShowID
-            for session in pending:
-                session_id = session["session_id"]
-                session_classes = session.get("classes", [])
-                session_name = session.get("name", "").lower()
-
-                best_match_id = None
-                best_score = 0
-
+            # Match using our exact name map
+            for wgi_fragment, session_ids in WGI_NAME_TO_SESSION.items():
+                # Find the WGI name that contains this fragment
+                matched_id = None
                 for wgi_name, show_id in show_id_map.items():
-                    score = 0
-                    # Check if WGI show name contains class keywords matching this session
-                    for cls in session_classes:
-                        cls_lower = cls.lower()
-                        if cls_lower in wgi_name or any(kw in wgi_name for kw in cls_lower.split()):
-                            score += 2
-                    # Also check round type
-                    if "prelim" in session_name and "prelim" in wgi_name:
-                        score += 3
-                    elif "semi" in session_name and "semi" in wgi_name:
-                        score += 3
-                    elif "final" in session_name and "final" in wgi_name:
-                        score += 3
-                    # World championship indicator
-                    if "world" in wgi_name or "championship" in wgi_name:
-                        score += 1
+                    if wgi_fragment in wgi_name:
+                        matched_id = show_id
+                        break
 
-                    if score > best_score:
-                        best_score = score
-                        best_match_id = show_id
+                if not matched_id:
+                    continue
 
-                if best_match_id and best_score >= 4:
-                    print(f"  ✅ Matched {session['name']} → ShowID {best_match_id} (score={best_score})")
+                for session_id in session_ids:
+                    if session_id not in pending_ids:
+                        continue  # Already has a ShowID
+
+                    print(f"  ✅ Matched '{wgi_fragment}' → {session_id} = {matched_id}")
                     db["worlds_sessions"].update_one(
                         {"session_id": session_id},
-                        {"$set": {"show_id": best_match_id}}
+                        {"$set": {"show_id": matched_id}}
                     )
-                    # Trigger a score sync for this session
+                    pending_ids.discard(session_id)
+
+                    # Trigger score sync + round scheduler
                     w_state = db["worlds_state"].find_one({"session_id": session_id})
                     if w_state:
-                        scrape_worlds_session(session_id, show_id=best_match_id)
-                        # Start round scheduler
+                        scrape_worlds_session(session_id, show_id=matched_id)
                         w_guards = w_state.get("data", [])
-                        w_name = session.get("name", session_id)
+                        w_session = db["worlds_sessions"].find_one({"session_id": session_id})
+                        w_name = w_session.get("name", session_id) if w_session else session_id
                         if w_guards:
-                            schedule_round_polling(w_name, best_match_id, w_guards, is_worlds=True, session_id=session_id)
-                else:
-                    print(f"  ⏳ No match yet for {session['name']} (best score={best_score})")
+                            schedule_round_polling(w_name, matched_id, w_guards, is_worlds=True, session_id=session_id)
+
+            still_pending = len(pending_ids)
+            if still_pending == 0:
+                print("✅ [WORKER] All worlds sessions matched!")
+                return
+            else:
+                print(f"  ⏳ {still_pending} sessions not yet on WGI scores page")
 
         except Exception as e:
             print(f"⚠️ [WORKER] Worlds ShowID poll error: {e}")
